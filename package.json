@@ -1,6 +1,6 @@
 {
   "name": "agent-switch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Run Claude Code on several subscriptions from one machine: switch accounts per session, see each one's limits, and move to the account with room before you hit a wall.",
   "license": "MIT",
   "author": "Pavan Kalvakota",
@@ -25,6 +25,7 @@
   },
   "files": [
     "dist",
+    "assets",
     "!dist/**/*.test.js",
     "!dist/test-helpers.js"
   ],

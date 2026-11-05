@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-11-05)
+
+- `agent-switch ui`: a local page to see limits and to add, switch, rename and remove accounts. It's only a display: every action runs an `agent-switch` command.
+- `add --events` and `login --events` report sign-in progress as `@@agent-switch <event> <detail>` lines (the sign-in link, the code prompt, `done` or `error`) and read a pasted code from stdin, for UIs.
+- `use`, `rename`, `remove` and `mode` take `--json`.
+
 ## 0.2.0 (2026-11-05)
 
 Cross-platform: Linux, macOS and Windows.

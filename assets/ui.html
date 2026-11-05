@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-switch</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --surface: #ffffff; --surface-2: #f0eee9; --text: #1d1c1a; --muted: #6b6862;
+    --line: #e3e0d9; --accent: #c2410c; --accent-text: #ffffff; --good: #15803d; --warn: #b45309; --bad: #b91c1c;
+    --track: #ebe8e1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161514; --surface: #1f1e1c; --surface-2: #2a2826; --text: #ecebe8; --muted: #9c988f;
+      --line: #33312e; --accent: #f97316; --accent-text: #1a1206; --good: #4ade80; --warn: #fbbf24; --bad: #f87171;
+      --track: #2f2d2a; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  h1 small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+  .spacer { flex: 1; }
+  button, .button { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    padding: 7px 13px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  button:hover, .button:hover { background: var(--surface-2); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.05); }
+  button.ghost { border-color: transparent; background: transparent; color: var(--muted); padding: 5px 8px; }
+  button.ghost:hover { color: var(--text); background: var(--surface-2); }
+  button.danger:hover { color: var(--bad); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .mode { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; box-shadow: var(--shadow); }
+  .mode label { color: var(--muted); font-size: 14px; }
+  .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .segmented button { border: 0; border-radius: 0; padding: 6px 12px; }
+  .segmented button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .threshold { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+  input[type=range] { accent-color: var(--accent); width: 120px; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+  .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+  .top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .name { font-weight: 650; font-size: 16px; }
+  .name-input { font: inherit; font-weight: 650; font-size: 16px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; background: var(--bg); color: var(--text); width: 180px; }
+  .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: .06em; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-text); }
+  .email { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .limits { margin-top: 12px; display: grid; gap: 8px; }
+  .limit { display: grid; grid-template-columns: minmax(90px, 140px) 1fr 44px; align-items: center; gap: 10px; font-size: 13px; }
+  .limit .label { color: var(--muted); }
+  .limit .pct { text-align: right; font-variant-numeric: tabular-nums; }
+  .limit .reset { grid-column: 2 / 4; color: var(--muted); font-size: 12px; margin-top: -6px; }
+  .track { display: block; height: 8px; background: var(--track); border-radius: 999px; overflow: hidden; }
+  .fill { display: block; height: 100%; border-radius: 999px; background: var(--good); transition: width .4s ease; }
+  .fill.near { background: var(--warn); } .fill.over { background: var(--bad); }
+  .note { margin-top: 10px; font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .note.bad { color: var(--bad); }
+  .actions { margin-top: 12px; display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
+
+  .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .toast.error { background: var(--bad); color: #fff; }
+
+  dialog { border: 1px solid var(--line); border-radius: 16px; padding: 0; width: min(480px, calc(100% - 32px)); background: var(--surface); color: var(--text); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .dialog-body { padding: 20px; }
+  dialog h2 { margin: 0 0 4px; font-size: 18px; }
+  dialog p { margin: 0 0 14px; color: var(--muted); font-size: 14px; }
+  .field { display: flex; gap: 8px; }
+  .field input { flex: 1; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); min-width: 0; }
+  .steps { margin: 14px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); display: grid; gap: 6px; max-height: 180px; overflow: auto; }
+  .steps li.error { color: var(--bad); } .steps li.done { color: var(--good); font-weight: 600; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  [hidden] { display: none !important; }
+  footer { margin-top: 28px; text-align: center; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>agent-switch <small>Claude Code accounts on this machine</small></h1>
+    <span class="spacer"></span>
+    <button id="refresh" title="Check every account's limits now">↻ Refresh</button>
+    <button id="add" class="primary">+ Add account</button>
+  </header>
+
+  <section class="mode" aria-label="Switching">
+    <label>Near a limit</label>
+    <span class="segmented" role="group">
+      <button data-mode="manual" aria-pressed="false" title="Warn when you start Claude, and name the account with room">Warn me</button>
+      <button data-mode="auto" aria-pressed="false" title="Start new sessions on the account with the most room">Switch for me</button>
+    </span>
+    <span class="threshold"><label for="threshold">at</label><input id="threshold" type="range" min="50" max="100" step="5"><span id="threshold-value">95%</span></span>
+  </section>
+
+  <section id="accounts" aria-live="polite"><div class="empty"><span class="spinner"></span></div></section>
+  <footer>New <code>claude</code> sessions start as the active account. Running sessions are never moved.
+    <br><button class="ghost" id="quit">Stop agent-switch ui</button></footer>
+</main>
+
+<dialog id="signin">
+  <div class="dialog-body">
+    <h2 id="signin-title">Add an account</h2>
+    <p id="signin-intro">Name it, then sign in to the other subscription in the private window that opens.</p>
+    <form id="name-form" class="field">
+      <input id="name" placeholder="e.g. Personal" autocomplete="off" maxlength="40">
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+    <div id="progress" hidden>
+      <div class="note"><span class="spinner" id="progress-spinner"></span><span id="progress-status">Starting…</span></div>
+      <p id="link-row" hidden style="margin-top:10px">Window didn't open, or opened as the wrong account? <a id="link" class="button" target="_blank" rel="noreferrer">Open the sign-in page</a> in a private window.</p>
+      <form id="code-form" class="field" hidden style="margin-top:10px">
+        <input id="code" placeholder="Paste the code from the sign-in page" autocomplete="off">
+        <button type="submit">Submit</button>
+      </form>
+      <ul class="steps" id="steps"></ul>
+    </div>
+  </div>
+  <div class="dialog-actions"><button id="signin-close">Cancel</button></div>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  let token = params.get("t") || "";
+  try {
+    if (token) sessionStorage.setItem("asw-token", token); else token = sessionStorage.getItem("asw-token") || "";
+  } catch {}
+  history.replaceState(null, "", "/?t=" + token);
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let state = null;
+  let busy = false;
+
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: { "x-agent-switch-token": token, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Something went wrong.");
+    return data;
+  }
+
+  let toastTimer;
+  function toast(message, error) {
+    const el = $("toast");
+    el.textContent = message;
+    el.className = "toast show" + (error ? " error" : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (el.className = "toast"), error ? 6000 : 3000);
+  }
+
+  function duration(ms) {
+    const m = Math.max(1, Math.floor(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`;
+  }
+
+  const NOTES = {
+    "signed-out": "Not signed in",
+    refused: "Sign-in refused by Anthropic",
+    paused: "Sign-in token expired; numbers update once Claude runs as this account",
+    "rate-limited": "Usage checks are rate limited right now",
+    unreachable: "Couldn't reach Anthropic",
+    error: "The last check failed",
+  };
+
+  function limitRows(limits, threshold) {
+    const now = Date.now();
+    return limits.map((l) => {
+      const reset = l.resetsAt ? Date.parse(l.resetsAt) : NaN;
+      const open = isNaN(reset) || reset > now;
+      const pct = open ? Math.round(l.percent * 100) : 0;
+      const cls = pct >= threshold ? "over" : pct >= threshold - 15 ? "near" : "";
+      const resetText = isNaN(reset) ? "" : open ? `resets in ${duration(reset - now)}` : "reset";
+      return `<div class="limit"><span class="label">${esc(l.label)}</span>
+        <span class="track" role="meter" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(l.label)}"><span class="fill ${cls}" style="width:${pct}%"></span></span>
+        <span class="pct">${pct}%</span>${resetText ? `<span class="reset">${resetText}</span>` : ""}</div>`;
+    }).join("");
+  }
+
+  function render() {
+    if (!state) return;
+    for (const b of document.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === state.switch));
+    $("threshold").value = state.threshold;
+    $("threshold-value").textContent = state.threshold + "%";
+
+    const cards = state.accounts.map((a) => {
+      const u = (state.usage || {})[a.id] || {};
+      const active = a.id === state.active;
+      const signedOut = u.status === "signed-out" || u.status === "refused";
+      const age = u.fetchedAt ? ` · as of ${duration(Date.now() - u.fetchedAt)} ago` : "";
+      const note = NOTES[u.status] || (u.stale ? "Numbers may be out of date" : "");
+      return `<article class="card${active ? " active" : ""}" data-id="${esc(a.id)}">
+        <div class="top">
+          <span class="name" data-rename title="Click to rename">${esc(a.label)}</span>
+          ${a.plan ? `<span class="pill">${esc(a.plan)}</span>` : ""}
+          ${active ? `<span class="badge">ACTIVE</span>` : ""}
+          <span class="spacer"></span>
+          ${active ? "" : `<button class="primary" data-use ${signedOut ? "disabled" : ""}>Use</button>`}
+        </div>
+        <div class="email">${esc(a.email || "")}${a.org && a.org !== a.email && !a.org.includes(a.email) ? " · " + esc(a.org) : ""}</div>
+        ${u.limits && u.limits.length ? `<div class="limits">${limitRows(u.limits, state.threshold)}</div>` : signedOut ? "" : `<div class="note">No limits known yet</div>`}
+        ${note ? `<div class="note${signedOut ? " bad" : ""}">${esc(note)}${u.limits && u.limits.length ? esc(age) : ""}${signedOut ? ` <button data-login>Sign in again</button>` : ""}</div>` : ""}
+        <div class="actions">
+          <button class="ghost" data-rename>Rename</button>
+          ${a.primary ? "" : `<button class="ghost danger" data-remove>Remove</button>`}
+        </div>
+      </article>`;
+    });
+    $("accounts").innerHTML = cards.join("") +
+      (state.accounts.length < 2 ? `<div class="empty">Add another subscription to switch between them.</div>` : "");
+  }
+
+  async function load(refresh) {
+    try {
+      state = await api("/api/state" + (refresh ? "?refresh=1" : ""));
+      render();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
+  async function act(fn, success) {
+    if (busy) return;
+    busy = true;
+    try {
+      await fn();
+      if (success) toast(success);
+      await load();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  $("accounts").addEventListener("click", (e) => {
+    const card = e.target.closest(".card");
+    if (!card) return;
+    const id = card.dataset.id;
+    const account = state.accounts.find((a) => a.id === id);
+    if (e.target.closest("[data-use]")) {
+      act(() => api("/api/use", { id }), `New sessions now start as ${account.label}. Running ones stay put.`);
+    } else if (e.target.closest("[data-remove]")) {
+      if (confirm(`Remove ${account.label}? Its sign-in on this machine is deleted.`)) act(() => api("/api/remove", { id }), `Removed ${account.label}.`);
+    } else if (e.target.closest("[data-login]")) {
+      startSignin("login", account);
+    } else if (e.target.closest("[data-rename]")) {
+      const name = card.querySelector(".name");
+      if (!name) return;
+      const input = document.createElement("input");
+      input.className = "name-input";
+      input.value = account.label;
+      name.replaceWith(input);
+      input.focus();
+      input.select();
+      let finished = false;
+      const finish = (save) => {
+        if (finished) return;
+        finished = true;
+        const label = input.value.trim();
+        if (save && label && label !== account.label) act(() => api("/api/rename", { id, label }), `Renamed to ${label}.`);
+        else render();
+      };
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") finish(true);
+        if (ev.key === "Escape") finish(false);
+      });
+      input.addEventListener("blur", () => finish(true));
+    }
+  });
+
+  for (const b of document.querySelectorAll("[data-mode]")) {
+    b.addEventListener("click", () => act(() => api("/api/mode", { mode: b.dataset.mode, threshold: $("threshold").value })));
+  }
+  $("threshold").addEventListener("input", () => ($("threshold-value").textContent = $("threshold").value + "%"));
+  $("threshold").addEventListener("change", () => act(() => api("/api/mode", { mode: state.switch, threshold: $("threshold").value })));
+  $("refresh").addEventListener("click", async () => {
+    $("refresh").disabled = true;
+    await load(true);
+    $("refresh").disabled = false;
+  });
+  $("quit").addEventListener("click", async () => {
+    try { await api("/api/quit", {}); } catch {}
+    document.body.innerHTML = `<main><div class="empty">agent-switch ui has stopped. You can close this tab.</div></main>`;
+  });
+
+  // ------------------------------------------------------------ sign-in
+  let job = null, cursor = 0, polling = null;
+  const dialog = $("signin");
+
+  function resetDialog(kind, account) {
+    $("signin-title").textContent = kind === "login" ? `Sign in to ${account.label} again` : "Add an account";
+    $("signin-intro").textContent = kind === "login"
+      ? `Sign in as ${account.email || account.label} in the private window that opens.`
+      : "Name it, then sign in to the other subscription in the private window that opens.";
+    $("name-form").hidden = kind === "login";
+    $("progress").hidden = true;
+    $("link-row").hidden = true;
+    $("code-form").hidden = true;
+    $("steps").innerHTML = "";
+    $("signin-close").textContent = "Cancel";
+    $("progress-spinner").hidden = false;
+    $("name").value = "";
+  }
+
+  function step(text, cls) {
+    const li = document.createElement("li");
+    li.textContent = text;
+    if (cls) li.className = cls;
+    $("steps").appendChild(li);
+    $("steps").scrollTop = $("steps").scrollHeight;
+  }
+
+  async function begin(path, body) {
+    $("name-form").hidden = true;
+    $("progress").hidden = false;
+    $("progress-status").textContent = "Starting the sign-in…";
+    try {
+      job = (await api(path, body)).job;
+      cursor = 0;
+      polling = setInterval(poll, 700);
+    } catch (e) {
+      finish(e.message, true);
+    }
+  }
+
+  async function poll() {
+    if (!job) return;
+    let data;
+    try { data = await api(`/api/jobs/${job}?after=${cursor}`); } catch { return; }
+    cursor = data.next;
+    for (const { event, detail } of data.events) {
+      if (event === "status") { $("progress-status").textContent = detail; step(detail); }
+      else if (event === "url") { $("link").href = detail; $("link-row").hidden = false; }
+      else if (event === "prompt") { $("code-form").hidden = false; }
+      else if (event === "done") {
+        let names = "";
+        try { names = JSON.parse(detail).accounts.filter(Boolean).map((a) => a.label).join(", "); } catch {}
+        finish(names ? `Signed in: ${names}.` : "Signed in.");
+        load(true);
+      } else if (event === "error") finish(detail, true);
+    }
+  }
+
+  function finish(message, error) {
+    clearInterval(polling);
+    polling = null;
+    job = null;
+    $("progress-spinner").hidden = true;
+    $("code-form").hidden = true;
+    $("progress-status").textContent = message;
+    step(message, error ? "error" : "done");
+    $("signin-close").textContent = "Close";
+    if (!error) setTimeout(() => dialog.open && dialog.close(), 1500);
+  }
+
+  function startSignin(kind, account) {
+    resetDialog(kind, account);
+    dialog.showModal();
+    if (kind === "login") begin("/api/login", { id: account.id });
+    else $("name").focus();
+  }
+
+  $("add").addEventListener("click", () => startSignin("add"));
+  $("name-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    begin("/api/add", { name: $("name").value.trim() });
+  });
+  $("code-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = $("code").value.trim();
+    if (!code || !job) return;
+    try {
+      await api(`/api/jobs/${job}/code`, { code });
+      $("code").value = "";
+      step("Code sent.");
+    } catch (err) { toast(err.message, true); }
+  });
+  async function closeDialog() {
+    if (job) { try { await api(`/api/jobs/${job}/cancel`, {}); } catch {} }
+    clearInterval(polling);
+    job = null;
+    if (dialog.open) dialog.close();
+  }
+  $("signin-close").addEventListener("click", closeDialog);
+  dialog.addEventListener("cancel", (e) => { e.preventDefault(); closeDialog(); });
+
+  load();
+  setInterval(() => { if (!document.hidden && !job) load(); }, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !job) load(); });
+})();
+</script>
+</body>
+</html>

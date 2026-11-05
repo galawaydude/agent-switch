@@ -72,6 +72,23 @@ State lives in `~/.local/state/agent-switch` (or `$XDG_STATE_HOME`), and in `%LO
 
 ## Use
 
+### The page
+
+```sh
+agent-switch ui
+```
+
+This opens a page in your browser where you can:
+- see every account's limits
+- add an account (the private sign-in window opens, and the page follows along)
+- pick the account new sessions use
+- rename or remove an account
+- choose between warning and switching automatically near a limit
+
+The page only displays things: every click runs an `agent-switch` command. It's served on `127.0.0.1` behind a one-time token and runs until you press Ctrl+C or **Stop**.
+
+### The commands
+
 ```sh
 agent-switch add Personal      # sign in to another subscription (opens a private browser window)
 agent-switch list              # your accounts; * marks the one new sessions use
@@ -122,6 +139,7 @@ An account you haven't used for a while has an expired access token. agent-switc
 
 | Command | What it does |
 |---|---|
+| `ui [--port <n>] [--no-open]` | Open the local page |
 | `list [--json]` | Show accounts |
 | `add [name]` | Sign in to another subscription |
 | `login <account>` | Sign an account in again |

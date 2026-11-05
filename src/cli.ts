@@ -7,7 +7,8 @@ import { diagnose } from "./doctor.js";
 import { age, duration, meter, style, table } from "./format.js";
 import { adopt, importOmarchy, remove, repairLinks } from "./homes.js";
 import { accountEnv, resolveBinary, runAttached } from "./launch.js";
-import { addAccount, reauth } from "./login.js";
+import { addAccount, eventRunner, reauth } from "./login.js";
+import { startUi } from "./ui.js";
 import { isWindows } from "./platform.js";
 import { peak } from "./policy.js";
 import { checkAndApply, desktopNotify, launchTarget } from "./session.js";
@@ -64,6 +65,18 @@ export function printAccounts(ctx: Context, registry: Registry): void {
 }
 
 const commands: Record<string, Command> = {
+  ui: {
+    usage: "ui [--port <n>] [--no-open]",
+    summary: "Open a local page to add, switch and watch your accounts",
+    async run(ctx) {
+      const portIndex = process.argv.indexOf("--port");
+      const port = portIndex > -1 ? Number(process.argv[portIndex + 1]) : undefined;
+      await startUi({ port: Number.isFinite(port) ? port : undefined, open: !ctx.flags.has("no-open"), log: ctx.out });
+      await new Promise(() => undefined); // serve until Ctrl+C or Stop
+      return 0;
+    },
+  },
+
   list: {
     usage: "list [--json]",
     summary: "Show your accounts; * marks the one new sessions use",
@@ -81,12 +94,18 @@ const commands: Record<string, Command> = {
   },
 
   add: {
-    usage: "add [name]",
+    usage: "add [name] [--events]",
     summary: "Sign in to another subscription in a private browser window",
     async run(ctx) {
       let name = ctx.args.join(" ").trim();
+      if (ctx.flags.has("events")) {
+        return withEvents(ctx, async (emit) => {
+          const result = await addAccount(ctx.provider, name, { log: (l) => emit("status", l), runner: eventRunner(emit) });
+          emit("done", JSON.stringify(result));
+        });
+      }
       if (!name && process.stdin.isTTY && ctx.provider.signedIn(ctx.provider.primaryHome())) name = await ask("Name this account (e.g. Personal): ");
-      const result = await addAccount(ctx.provider, name, ctx.out);
+      const result = await addAccount(ctx.provider, name, { log: ctx.out });
       const names = result.accounts.map(describe).join(", ");
       if (result.kind === "primary") ctx.out(style.green(`Signed in as ${names}. This is your Main account.`));
       else if (result.kind === "recovered") ctx.out(style.green(`Finished an interrupted sign-in: added ${names}.`));
@@ -99,13 +118,21 @@ const commands: Record<string, Command> = {
   },
 
   login: {
-    usage: "login <account>",
+    usage: "login <account> [--events]",
     summary: "Sign an account in again after its sign-in lapsed",
     async run(ctx) {
       const target = ctx.args.join(" ");
       if (!target) throw new UsageError("Which account? agent-switch login <account>");
       const account = mustFind(ctx.provider, load(ctx.provider), target);
-      await reauth(ctx.provider, account, ctx.out);
+      if (ctx.flags.has("events")) {
+        return withEvents(ctx, async (emit) => {
+          await reauth(ctx.provider, account, { log: (l) => emit("status", l), runner: eventRunner(emit) });
+          mutate(ctx.provider, (r) => refreshIdentities(ctx.provider, r));
+          if (!ctx.provider.signedIn(account.home || ctx.provider.primaryHome())) throw new AccountError("The sign-in didn't finish.");
+          emit("done", JSON.stringify({ kind: "login", accounts: [find(load(ctx.provider), account.id)] }));
+        });
+      }
+      await reauth(ctx.provider, account, { log: ctx.out });
       const after = ctx.provider.identity(account.home || ctx.provider.primaryHome());
       if (account.accountId && after.accountId && after.accountId !== account.accountId) {
         ctx.err(style.errYellow(`Heads up: that home is now signed in as ${after.email || after.accountId}, not ${account.email || account.label}.`));
@@ -120,6 +147,10 @@ const commands: Record<string, Command> = {
     summary: "Choose the account new sessions start as (running ones stay put)",
     run(ctx) {
       const { previous, current } = use(ctx.provider, ctx.args.join(" ") || "next");
+      if (ctx.flags.has("json")) {
+        ctx.out(JSON.stringify({ previous, current, signedIn: ctx.provider.signedIn(current.home || ctx.provider.primaryHome()) }));
+        return 0;
+      }
       if (previous.id === current.id) ctx.out(`New ${ctx.provider.name} sessions already use ${describe(current)}.`);
       else {
         ctx.out(`New ${ctx.provider.name} sessions now use ${style.bold(describe(current))}.`);
@@ -139,6 +170,10 @@ const commands: Record<string, Command> = {
       const [target, ...rest] = ctx.args;
       if (!target || rest.length === 0) throw new UsageError("agent-switch rename <account> <new name>");
       const account = rename(ctx.provider, target, rest.join(" "));
+      if (ctx.flags.has("json")) {
+        ctx.out(JSON.stringify(account));
+        return 0;
+      }
       ctx.out(`Renamed ${account.id} to ${account.label}.`);
       return 0;
     },
@@ -151,6 +186,10 @@ const commands: Record<string, Command> = {
       const target = ctx.args.join(" ");
       if (!target) throw new UsageError("Which account? agent-switch remove <account>");
       const { account, deletedHome } = remove(ctx.provider, target);
+      if (ctx.flags.has("json")) {
+        ctx.out(JSON.stringify({ account, deletedHome }));
+        return 0;
+      }
       ctx.out(`Removed ${describe(account)}.`);
       if (!deletedHome) ctx.out(style.dim(`Its home was adopted, so it was left in place: ${account.home}`));
       return 0;
@@ -163,6 +202,10 @@ const commands: Record<string, Command> = {
     run(ctx) {
       const [mode, threshold] = ctx.args;
       const registry = mode ? setMode(ctx.provider, mode, threshold) : load(ctx.provider);
+      if (ctx.flags.has("json")) {
+        ctx.out(JSON.stringify({ switch: registry.switch, threshold: registry.threshold }));
+        return 0;
+      }
       if (registry.switch === "auto") {
         ctx.out(`${ctx.provider.name} moves new sessions to the account with the most room once the active one reaches ${registry.threshold}%.`);
       } else {
@@ -293,6 +336,21 @@ const commands: Record<string, Command> = {
     },
   },
 };
+
+/**
+ * Machine-readable progress for UIs: one `@@agent-switch <event> <detail>`
+ * line per step, ending in `done <json>` or `error <message>`.
+ */
+async function withEvents(ctx: Context, body: (emit: (event: string, detail: string) => void) => Promise<void>): Promise<number> {
+  const emit = (event: string, detail: string) => ctx.out(`@@agent-switch ${event} ${detail.replace(/[\r\n]+/g, " ")}`);
+  try {
+    await body(emit);
+    return 0;
+  } catch (error) {
+    emit("error", error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
 
 function defaultShell(): string {
   if (process.env.SHELL) return path.basename(process.env.SHELL);
