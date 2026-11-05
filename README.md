@@ -1,191 +1,166 @@
 # agent-switch
 
-Run Claude Code on several subscriptions from one machine.
+Use several Claude Code subscriptions on one machine, and switch between them in a click.
 
-- **Switch accounts per session.** Pick which subscription new `claude` sessions start as. Running sessions are never touched.
-- **See every account's limits.** Session, weekly and model-scoped windows, with reset times, for every account at once.
-- **Move before you hit the wall.** When the active account nears its limit, agent-switch tells you which account has room, or switches new sessions there for you.
-- **One setup.** Every account shares your history, projects, settings, skills, hooks, plugins, MCP servers and `CLAUDE.md`. Only the login differs.
+- **Switch accounts.** Pick which subscription new `claude` sessions start as.
+- **See every account's limits** at a glance, with when they reset.
+- **Never hit the wall.** Near a limit, it warns you, or moves new sessions to an account with room.
+- **One setup.** All accounts share your history, settings, skills, plugins, MCP servers and `CLAUDE.md`. Only the login differs.
 
-```
-$ agent-switch status
-Claude · manual switching at 95%
+Works on macOS, Linux and Windows.
 
-*  Main  Max 5x  me@work.com  ACTIVE
-    Session (5h)    █░░░░░░░░░░░░░░░░░░░    6%  resets in 4h 36m
-    Weekly          █████████████░░░░░░░   66%  resets in 17h 46m
-    Weekly · Fable  ░░░░░░░░░░░░░░░░░░░░    2%  resets in 17h 46m
+## Quick start
 
-   Personal  Pro  me@home.com
-    Session (5h)  ░░░░░░░░░░░░░░░░░░░░    0%
-    Weekly        ░░░░░░░░░░░░░░░░░░░░    0%  resets in 6d 0h
-```
-
-## How it works
-
-agent-switch is a launcher, not a proxy. It never sits between Claude Code and Anthropic.
-
-- Your existing `~/.claude` login is the **Main** account and stays exactly where it is.
-- Each added account gets its own folder under `~/.local/state/agent-switch/claude/<name>/`. That folder holds only that account's login. Everything else is a symlink back to `~/.claude`.
-- `claude` (through a small shell function) starts the real Claude Code with `CLAUDE_CONFIG_DIR` pointed at the account you picked.
-- Limits come from the same Anthropic endpoint Claude Code's `/usage` reads, asked with each account's own sign-in.
-- agent-switch **never refreshes or copies login tokens**. Only Claude Code does that, so two programs never fight over a rotating refresh token.
-
-See [docs/DESIGN.md](docs/DESIGN.md) for the details.
-
-## Install
-
-Works on Linux, macOS and Windows. Needs Node 20 or newer and [Claude Code](https://docs.claude.com/claude-code).
+**1. Install**
 
 ```sh
-# Homebrew (macOS and Linux)
 brew install galawaydude/tap/agent-switch
-
-# or npm, anywhere
-npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.2.0/agent-switch-0.2.0.tgz
 ```
 
-Then make `claude` go through agent-switch:
+No Homebrew? With Node 20+:
 
 ```sh
-# bash / zsh: ~/.bashrc or ~/.zshrc
-eval "$(agent-switch shell-init)"
+npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.3.0/agent-switch-0.3.0.tgz
+```
 
-# fish: ~/.config/fish/config.fish
+You also need [Claude Code](https://docs.claude.com/claude-code), signed in as usual. That login becomes your **Main** account.
+
+**2. Make `claude` use it.** Add one line to your shell's startup file, then open a new terminal:
+
+```sh
+echo 'eval "$(agent-switch shell-init)"' >> ~/.zshrc     # macOS (zsh)
+echo 'eval "$(agent-switch shell-init)"' >> ~/.bashrc    # Linux (bash)
+```
+
+<details>
+<summary>fish or PowerShell</summary>
+
+```sh
+# fish: add to ~/.config/fish/config.fish
 agent-switch shell-init fish | source
 
-# PowerShell: $PROFILE
+# PowerShell: add to $PROFILE
 agent-switch shell-init powershell | Out-String | Invoke-Expression
 ```
+</details>
 
-Check the setup with `agent-switch doctor`.
-
-### Platform notes
-
-| | Logins | Shared setup | Notes |
-|---|---|---|---|
-| Linux | `.credentials.json` in each account folder | symlinks | |
-| macOS | Keychain, one entry per account folder (Claude Code's own scheme) | symlinks | Removing an account also deletes its Keychain entry |
-| Windows | `.credentials.json` in each account folder | junctions for folders; symlinks for files | File symlinks need Developer Mode. Without it, `settings.json`, `CLAUDE.md`, `history.jsonl` and `keybindings.json` aren't shared, and `doctor` says so. `remove` can't detect a running session, so quit Claude first |
-
-State lives in `~/.local/state/agent-switch` (or `$XDG_STATE_HOME`), and in `%LOCALAPPDATA%\agent-switch` on Windows.
-
-## Use
-
-### The page
+**3. Open it**
 
 ```sh
 agent-switch ui
 ```
 
-This opens a page in your browser where you can:
-- see every account's limits
-- add an account (the private sign-in window opens, and the page follows along)
-- pick the account new sessions use
-- rename or remove an account
-- choose between warning and switching automatically near a limit
+A page opens in your browser. Click **+ Add account**, give it a name, and sign in to your other subscription in the private window that opens. Then click **Use** on whichever account you want, and `claude` starts as that account from then on.
 
-The page only displays things: every click runs an `agent-switch` command. It's served on `127.0.0.1` behind a one-time token and runs until you press Ctrl+C or **Stop**.
+Something not working? Run `agent-switch doctor`.
 
-### The commands
+## Everyday use
+
+**The page** (`agent-switch ui`) shows every account with its limits. From there you can:
+- **Use** an account: new `claude` sessions start as it. Sessions already running stay put.
+- **+ Add account**, **Rename**, **Remove**, or **Sign in again** when a login has lapsed.
+- Choose **Warn me** or **Switch for me** for when the active account nears its limit, and at what percentage.
+
+Close it with **Stop** at the bottom, or Ctrl+C in the terminal.
+
+**Prefer the terminal?** The same things as commands:
 
 ```sh
-agent-switch add Personal      # sign in to another subscription (opens a private browser window)
-agent-switch list              # your accounts; * marks the one new sessions use
+agent-switch status            # every account's limits
 agent-switch use personal      # new sessions start as Personal
 agent-switch use next          # cycle to the next account
-agent-switch status            # limits for every account (--refresh to skip the 5-minute cache)
-claude                         # starts as the active account
-agent-switch run --as main     # one session as a different account, without switching
+agent-switch add Work          # sign in to another subscription
+agent-switch mode auto 90      # switch automatically at 90%
+agent-switch run --as main     # one session as another account, without switching
 ```
 
-Accounts can be named by id, name or email. `asw` is a short alias for `agent-switch`.
+`asw` is a short alias for `agent-switch`. Accounts can be named by id, name or email.
 
-### Adding an account
+## Good to know
 
-`agent-switch add <name>` runs `claude auth login` in a fresh folder and opens the sign-in page in a **private** window. A normal window would quietly reuse the account you're already signed in to. It looks for Chrome, Chromium, Brave, Vivaldi, Edge, Firefox, LibreWolf or Zen, on each platform. To use something else, set `AGENT_SWITCH_BROWSER` to a command that opens a URL privately:
+- **Sign in to new accounts in the private window.** A normal window would quietly reuse the account you're already signed in to. If the wrong window opens, use the page's **Open the sign-in page** link in a private window yourself.
+- **Don't log out of Claude Code** to add an account. Logging out revokes the saved login.
+- **Running sessions never move.** Switching only affects sessions you start afterwards.
+- **`claude` always starts.** If agent-switch can't decide (no network, broken state), it warns and starts Claude Code as usual.
+- **Paused numbers are normal.** Accounts you haven't used for a while show their last-known limits until a session runs as them: `agent-switch run --as <name>` refreshes them.
+- **Your logins stay where Claude Code keeps them**: the Keychain on macOS, and a file in each account's folder elsewhere. agent-switch never copies or refreshes login tokens.
 
-```sh
-AGENT_SWITCH_BROWSER="firefox -P throwaway --private-window" agent-switch add Work
-```
+## How it works
 
-Don't log out of Claude Code to add an account: logging out revokes the saved sign-in.
+agent-switch is a launcher, not a proxy. It never sits between Claude Code and Anthropic.
 
-To register a config folder that's already signed in, use `agent-switch adopt <dir> [name]`.
+- Each added account gets its own folder, which holds only its login. Everything else links back to `~/.claude`.
+- The `claude` shell function starts the real Claude Code with `CLAUDE_CONFIG_DIR` pointed at the account you picked.
+- Limits come from the same Anthropic endpoint Claude Code's `/usage` reads.
+- The page is only a display: every click runs an `agent-switch` command. It's reachable only from your own machine, behind a one-time link.
 
-### Switching near a limit
+More detail is in [docs/DESIGN.md](docs/DESIGN.md).
 
-```sh
-agent-switch mode manual 95    # default: warn at 95% and say which account has room
-agent-switch mode auto 90      # move new sessions to the account with the most room at 90%
-```
+## Reference
 
-The check runs when you start `claude`. It reuses numbers from the last 5 minutes and waits at most 3 seconds on the network, so `claude` still starts quickly offline.
-
-Only the active account crossing the threshold triggers anything, so auto mode never flaps back to an account that just reset. Among the accounts with room, it prefers ones not close to their own limit, then ones with fresh numbers, then the emptiest.
-
-To get notified without starting a session, run `check` on a timer:
-
-```sh
-# crontab -e
-*/10 * * * * agent-switch check --notify --quiet
-```
-
-### Expired sign-ins
-
-An account you haven't used for a while has an expired access token. agent-switch won't refresh it (see above), so its numbers show as paused, with their age, until a session runs as it. Running `agent-switch run --as <name>` once wakes it up. If the sign-in itself has lapsed, run `agent-switch login <name>`.
-
-## Commands
+<details>
+<summary>All commands</summary>
 
 | Command | What it does |
 |---|---|
-| `ui [--port <n>] [--no-open]` | Open the local page |
+| `ui [--port <n>] [--no-open]` | Open the page |
+| `status [--refresh] [--json]` | Limits for every account |
 | `list [--json]` | Show accounts |
+| `use [account\|next]` | Choose the account new sessions use |
 | `add [name]` | Sign in to another subscription |
 | `login <account>` | Sign an account in again |
-| `use [account\|next]` | Choose the account new sessions use |
 | `rename <account> <name>` | Rename an account |
-| `remove <account>` | Forget an account (and delete the folder agent-switch made for it) |
-| `status [--refresh] [--json]` | Limits for every account |
-| `mode [manual\|auto] [threshold]` | How to react near a limit |
-| `check [--notify] [--quiet]` | Refresh limits and apply the switching policy |
-| `run [--as <account>] [--no-check] [-- args]` | Start Claude Code (what the `claude` function calls) |
+| `remove <account>` | Forget an account and delete its folder |
+| `mode [manual\|auto] [threshold]` | Warn or switch automatically near a limit |
+| `check [--notify] [--quiet]` | Refresh limits and apply the switching rule (for cron) |
+| `run [--as <account>] [-- args]` | Start Claude Code (what the `claude` function calls) |
 | `shell-init [bash\|zsh\|fish\|powershell]` | Print the `claude` shell function |
-| `adopt <dir> [name]` | Register an already signed-in config folder |
+| `adopt <dir> [name]` | Register a config folder that's already signed in |
 | `doctor` | Check the setup |
 
-## Behaviour worth knowing
+</details>
 
-- **Running sessions never move.** Switching only affects sessions started afterwards.
-- **Nested sessions keep their account.** When Claude Code runs `claude` itself, the child stays on its parent's account.
-- **A `CLAUDE_CONFIG_DIR` you set yourself wins.** agent-switch steps aside.
-- **`claude` always starts.** If agent-switch can't decide (broken state, no network), it warns and starts Claude Code as usual.
-- **Removing is safe.** `remove` refuses an account a running session uses. It deletes only the folder agent-switch created, never the shared files its links point to, and never an adopted folder.
+<details>
+<summary>Platform notes</summary>
 
-## Environment
+| | Logins | Shared setup | Notes |
+|---|---|---|---|
+| macOS | Keychain, one entry per account folder | symlinks | Removing an account also deletes its Keychain entry |
+| Linux | `.credentials.json` in each account folder | symlinks | |
+| Windows | `.credentials.json` in each account folder | junctions for folders, symlinks for files | File symlinks need Developer Mode; `doctor` says which files aren't shared without it. Quit Claude before removing an account |
+
+State lives in `~/.local/state/agent-switch`, or `%LOCALAPPDATA%\agent-switch` on Windows.
+
+</details>
+
+<details>
+<summary>Environment variables</summary>
 
 | Variable | Effect |
 |---|---|
-| `AGENT_SWITCH_STATE_DIR` | Where registries, account folders and caches live (default `$XDG_STATE_HOME/agent-switch`) |
-| `AGENT_SWITCH_BROWSER` | Command that opens a URL in a private window, for `add` and `login` |
-| `AGENT_SWITCH_NO_CHECK` | Skip the limit check when launching |
+| `AGENT_SWITCH_BROWSER` | Command that opens a URL in a private window, for signing in |
+| `AGENT_SWITCH_STATE_DIR` | Where account folders and caches live |
+| `AGENT_SWITCH_NO_CHECK` | Skip the limit check when starting `claude` |
 | `AGENT_SWITCH_NO_NOTIFY` | Never send desktop notifications |
 | `AGENT_SWITCH_CLAUDE_BIN` | Use this `claude` binary instead of the one on `PATH` |
 
-## Develop
+</details>
+
+<details>
+<summary>Develop</summary>
 
 ```sh
 git clone https://github.com/galawaydude/agent-switch && cd agent-switch
 npm install
-npm test          # builds, then runs the suite against a sandboxed $HOME
+npm test          # builds, then runs the tests against a sandboxed home folder
 node dist/cli.js help
 ```
 
-Tests never touch your real `~/.claude`.
+</details>
 
 ## Roadmap
 
-- More agents: Codex, Grok and others that keep their login in a config folder
+- More agents: Codex, Grok and others.
 
 ## License
 
