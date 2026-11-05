@@ -21,18 +21,6 @@ Claude · manual switching at 95%
     Weekly        ░░░░░░░░░░░░░░░░░░░░    0%  resets in 6d 0h
 ```
 
-## Do you need this?
-
-**On [Omarchy](https://omarchy.org) 4.5 or newer, no.** Omarchy has this built in as *agent accounts* (`omarchy agent account`). It adds a bar panel with live limit meters and covers Codex and Grok as well as Claude. Use that.
-
-agent-switch is the same idea for everywhere else:
-
-- macOS and Windows
-- Linux setups that don't run Omarchy
-- machines where you want it as a plain CLI, with no desktop integration
-
-Already using Omarchy's accounts and moving to another machine? `agent-switch import omarchy` takes over existing Omarchy logins in place.
-
 ## How it works
 
 agent-switch is a launcher, not a proxy. It never sits between Claude Code and Anthropic.
@@ -43,7 +31,7 @@ agent-switch is a launcher, not a proxy. It never sits between Claude Code and A
 - Limits come from the same Anthropic endpoint Claude Code's `/usage` reads, asked with each account's own sign-in.
 - agent-switch **never refreshes or copies login tokens**. Only Claude Code does that, so two programs never fight over a rotating refresh token.
 
-The design is borrowed from [Omarchy](https://omarchy.org)'s agent accounts, made standalone. See [docs/DESIGN.md](docs/DESIGN.md) for the details.
+See [docs/DESIGN.md](docs/DESIGN.md) for the details.
 
 ## Install
 
@@ -106,7 +94,7 @@ AGENT_SWITCH_BROWSER="firefox -P throwaway --private-window" agent-switch add Wo
 
 Don't log out of Claude Code to add an account: logging out revokes the saved sign-in.
 
-If you already use Omarchy's agent accounts, take them over in place with `agent-switch import omarchy`. For any other folder that's already signed in, use `agent-switch adopt <dir> [name]`.
+To register a config folder that's already signed in, use `agent-switch adopt <dir> [name]`.
 
 ### Switching near a limit
 
@@ -146,7 +134,6 @@ An account you haven't used for a while has an expired access token. agent-switc
 | `run [--as <account>] [--no-check] [-- args]` | Start Claude Code (what the `claude` function calls) |
 | `shell-init [bash\|zsh\|fish\|powershell]` | Print the `claude` shell function |
 | `adopt <dir> [name]` | Register an already signed-in config folder |
-| `import omarchy` | Adopt Omarchy's agent accounts |
 | `doctor` | Check the setup |
 
 ## Behaviour worth knowing
@@ -156,7 +143,6 @@ An account you haven't used for a while has an expired access token. agent-switc
 - **A `CLAUDE_CONFIG_DIR` you set yourself wins.** agent-switch steps aside.
 - **`claude` always starts.** If agent-switch can't decide (broken state, no network), it warns and starts Claude Code as usual.
 - **Removing is safe.** `remove` refuses an account a running session uses. It deletes only the folder agent-switch created, never the shared files its links point to, and never an adopted folder.
-- **Works alongside Omarchy.** Sessions started through agent-switch use agent-switch's choice, even with Omarchy's own `claude` wrapper on your PATH.
 
 ## Environment
 
