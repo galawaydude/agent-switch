@@ -1,5 +1,6 @@
 import { readOauth } from "./claude.js";
-import { isRecord, readRecord, str, writeJsonAtomic } from "./fsutil.js";
+import * as path from "node:path";
+import { isRecord, mkdirPrivate, readRecord, str, writeJsonAtomic } from "./fsutil.js";
 import { cachePath } from "./paths.js";
 import type { Provider } from "./provider.js";
 import { accountHome, type Account } from "./registry.js";
@@ -187,6 +188,7 @@ function readCache(provider: Provider, account: Account): CacheFile | undefined 
 
 function writeCache(provider: Provider, account: Account, cache: CacheFile): void {
   try {
+    mkdirPrivate(path.dirname(cachePath(provider.id, account.id)));
     writeJsonAtomic(cachePath(provider.id, account.id), cache);
   } catch {
     // A cache we can't write only costs a check next time.

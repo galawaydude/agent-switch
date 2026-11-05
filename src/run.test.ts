@@ -101,3 +101,32 @@ test("a missing claude binary exits 127 with a clear message", () => {
   assert.equal(result.status, 127);
   assert.match(result.stderr, /isn't on your PATH/);
 });
+
+test("one Ctrl+C reaches Claude once, and a TERM to the wrapper is passed on", async () => {
+  const { spawn } = await import("node:child_process");
+  fs.writeFileSync(
+    fakeClaude,
+    `#!/bin/sh\nn=0\ntrap 'n=$((n+1))' INT\ntrap 'echo "ints=$n"; exit 0' TERM\necho ready\nwhile :; do sleep 0.05; done\n`,
+    { mode: 0o755 },
+  );
+  const base = { ...process.env };
+  for (const key of ["CLAUDE_CONFIG_DIR", "OMARCHY_AGENT_CLAUDE_HOME", "AGENT_SWITCH_ACCOUNT"]) delete base[key];
+  // Its own process group, like a foreground job in a terminal.
+  const wrapper = spawn(process.execPath, [CLI, "run"], {
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...base, PATH: `${path.dirname(fakeClaude)}:/usr/bin:/bin`, AGENT_SWITCH_NO_CHECK: "1" },
+  });
+  let out = "";
+  wrapper.stdout.on("data", (chunk) => (out += chunk));
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 100 && !out.includes("ready"); i++) await wait(20);
+  assert.ok(out.includes("ready"), "fake claude started");
+  process.kill(-wrapper.pid!, "SIGINT"); // what the terminal does on Ctrl+C
+  await wait(300);
+  assert.equal(wrapper.exitCode, null, "the wrapper survives Ctrl+C");
+  wrapper.kill("SIGTERM"); // to the wrapper alone
+  const code = await new Promise<number | null>((r) => wrapper.on("exit", (c) => r(c)));
+  assert.match(out, /ints=1\b/);
+  assert.equal(code, 0);
+});

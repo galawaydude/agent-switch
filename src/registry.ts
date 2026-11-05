@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isRecord, readJson, str, withLock, writeJsonAtomic } from "./fsutil.js";
-import { homesRoot, isInside, lockPath, registryPath } from "./paths.js";
+import { isRecord, mkdirPrivate, readJson, str, withLock, writeJsonAtomic } from "./fsutil.js";
+import { homesRoot, isInside, lockPath, registryPath, stateRoot } from "./paths.js";
 import type { Identity, Provider } from "./provider.js";
 
 export const DEFAULT_THRESHOLD = 95;
@@ -102,6 +102,7 @@ export function load(provider: Provider): Registry {
 }
 
 export function save(provider: Provider, registry: Registry): void {
+  mkdirPrivate(stateRoot());
   writeJsonAtomic(registryPath(provider.id), registry);
 }
 

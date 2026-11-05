@@ -8,6 +8,8 @@ export interface ClaudeOauth {
   refreshToken: string;
   /** Milliseconds since the epoch; 0 when unknown. */
   expiresAt: number;
+  /** When the sign-in itself lapses unless Claude Code renews it; 0 when unknown. */
+  refreshExpiresAt: number;
   subscriptionType: string;
   rateLimitTier: string;
 }
@@ -34,10 +36,12 @@ export function readOauth(home: string): ClaudeOauth | undefined {
   const login = readRecord(credentialsFile(home)).claudeAiOauth;
   if (!isRecord(login)) return undefined;
   const expiresAt = Number(login.expiresAt);
+  const refreshExpiresAt = Number(login.refreshTokenExpiresAt);
   return {
     accessToken: str(login.accessToken),
     refreshToken: str(login.refreshToken),
     expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+    refreshExpiresAt: Number.isFinite(refreshExpiresAt) ? refreshExpiresAt : 0,
     subscriptionType: str(login.subscriptionType),
     rateLimitTier: str(login.rateLimitTier),
   };

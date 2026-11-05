@@ -59,25 +59,31 @@ export function accountEnv(provider: Provider, account: Account, base: NodeJS.Pr
   return env;
 }
 
-const FORWARDED: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGWINCH", "SIGUSR1", "SIGUSR2"];
+/**
+ * Signals sent to the wrapper alone (kill, a closing session manager) are
+ * passed on. Terminal-generated ones (Ctrl+C, Ctrl+Backslash, resizes) already reach
+ * the whole foreground process group, child included: forwarding those would
+ * deliver them twice, and Claude Code reads a double Ctrl+C as "exit". The
+ * wrapper just ignores them and waits for the child to decide.
+ */
+const FORWARDED: NodeJS.Signals[] = ["SIGTERM", "SIGHUP", "SIGUSR1", "SIGUSR2"];
+const GROUP_DELIVERED: NodeJS.Signals[] = ["SIGINT", "SIGQUIT", "SIGWINCH"];
 
 /**
- * Run a child with the terminal, forward signals to it, and resolve with the
- * exit code a shell would report (128 + signal number for a signal death).
+ * Run a child with the terminal, and resolve with the exit code a shell
+ * would report (128 + signal number for a signal death).
  */
 export function runAttached(file: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { stdio: "inherit", env });
     const handlers = new Map<NodeJS.Signals, () => void>();
     for (const signal of FORWARDED) {
-      // The terminal already delivers Ctrl+C to the whole foreground group;
-      // forwarding again is harmless for Claude Code and needed for kill(1).
-      const handler = () => {
-        if (child.exitCode === null) child.kill(signal);
-      };
-      handlers.set(signal, handler);
-      process.on(signal, handler);
+      handlers.set(signal, () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      });
     }
+    for (const signal of GROUP_DELIVERED) handlers.set(signal, () => undefined);
+    for (const [signal, handler] of handlers) process.on(signal, handler);
     const cleanup = () => {
       for (const [signal, handler] of handlers) process.off(signal, handler);
     };

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { PROVIDERS, claude } from "./claude.js";
+import { diagnose } from "./doctor.js";
 import { age, duration, meter, style, table } from "./format.js";
 import { adopt, importOmarchy, repairLinks } from "./homes.js";
 import { accountEnv, resolveBinary, runAttached } from "./launch.js";
@@ -121,6 +122,9 @@ const commands: Record<string, Command> = {
       else {
         ctx.out(`New ${ctx.provider.name} sessions now use ${style.bold(describe(current))}.`);
         ctx.out(style.dim(`Running sessions stay on ${previous.label}.`));
+      }
+      if (!ctx.provider.signedIn(current.home || ctx.provider.primaryHome())) {
+        ctx.err(style.errYellow(`${current.label} isn't signed in. Run: agent-switch login ${current.id}`));
       }
       return 0;
     },
@@ -247,6 +251,24 @@ const commands: Record<string, Command> = {
         ctx.out("Nothing to do.");
       }
       return 0;
+    },
+  },
+
+  doctor: {
+    usage: "doctor",
+    summary: "Check the setup and say how to fix anything wrong",
+    run(ctx) {
+      const findings = diagnose(ctx.provider);
+      const mark = { ok: style.green("✓"), warn: style.yellow("!"), fail: style.red("✗") };
+      for (const f of findings) {
+        ctx.out(`${mark[f.level]} ${f.message}`);
+        if (f.fix) ctx.out(style.dim(`    ${f.fix}`));
+      }
+      const failed = findings.filter((f) => f.level === "fail").length;
+      const warned = findings.filter((f) => f.level === "warn").length;
+      ctx.out("");
+      ctx.out(failed ? style.red(`${failed} problem${failed > 1 ? "s" : ""} to fix.`) : warned ? style.yellow("Working, with suggestions above.") : style.green("All good."));
+      return failed ? 1 : 0;
     },
   },
 
