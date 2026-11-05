@@ -1,12 +1,19 @@
 #!/usr/bin/env node
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { createRequire } from "node:module";
 import { PROVIDERS, claude } from "./claude.js";
-import { style, table } from "./format.js";
+import { age, duration, meter, style, table } from "./format.js";
 import { adopt, importOmarchy, repairLinks } from "./homes.js";
+import { accountEnv, resolveBinary, runAttached } from "./launch.js";
 import { addAccount, reauth } from "./login.js";
+import { peak } from "./policy.js";
+import { checkAndApply, desktopNotify, launchTarget } from "./session.js";
+import { collectAll, type AccountUsage } from "./usage.js";
 import type { Provider } from "./provider.js";
 import {
   AccountError,
+  find,
   load,
   mustFind,
   mutate,
@@ -184,6 +191,65 @@ const commands: Record<string, Command> = {
     },
   },
 
+  run: {
+    usage: "run [--as <account>] [--no-check] [-- claude args]",
+    summary: "Start Claude Code as the active account (what the `claude` shell function calls)",
+    run: () => 0, // handled before argument parsing; see runClaude
+  },
+
+  "shell-init": {
+    usage: "shell-init [bash|zsh|fish]",
+    summary: "Print the `claude` shell function; add `eval \"$(agent-switch shell-init)\"` to your shell rc",
+    run(ctx) {
+      const shell = ctx.args[0] || path.basename(process.env.SHELL || "bash");
+      const self = resolveBinary("agent-switch") ? "agent-switch" : `${quote(process.execPath)} ${quote(fs.realpathSync(process.argv[1]!))}`;
+      if (shell === "fish") {
+        ctx.out("# agent-switch: start Claude Code as the account you picked");
+        ctx.out(`function claude --wraps claude; ${self} run -- $argv; end`);
+      } else if (shell === "bash" || shell === "zsh" || shell === "sh") {
+        ctx.out("# agent-switch: start Claude Code as the account you picked");
+        ctx.out(`claude() { ${self === "agent-switch" ? "command agent-switch" : self} run -- "$@"; }`);
+      } else {
+        throw new UsageError("agent-switch shell-init [bash|zsh|fish]");
+      }
+      return 0;
+    },
+  },
+
+  status: {
+    usage: "status [--refresh] [--json]",
+    summary: "Show every account's limits and when they reset",
+    async run(ctx) {
+      mutate(ctx.provider, (r) => refreshIdentities(ctx.provider, r));
+      const registry = load(ctx.provider);
+      const usage = await collectAll(ctx.provider, registry.accounts, { force: ctx.flags.has("refresh") });
+      if (ctx.flags.has("json")) {
+        ctx.out(JSON.stringify({ ...registry, usage: Object.fromEntries(usage) }, null, 2));
+        return 0;
+      }
+      printStatus(ctx, registry, usage);
+      return 0;
+    },
+  },
+
+  check: {
+    usage: "check [--notify] [--quiet]",
+    summary: "Refresh limits and apply the switching policy (for cron or a systemd timer)",
+    async run(ctx) {
+      const { applied } = await checkAndApply(ctx.provider, { budgetMs: 15_000 });
+      if (applied) {
+        if (!ctx.flags.has("quiet")) {
+          ctx.out(applied.title);
+          ctx.out(style.dim(applied.body));
+        }
+        if (ctx.flags.has("notify")) desktopNotify(applied.title, applied.body, applied.decision.action === "exhausted");
+      } else if (!ctx.flags.has("quiet")) {
+        ctx.out("Nothing to do.");
+      }
+      return 0;
+    },
+  },
+
   repair: {
     usage: "repair",
     summary: "Re-create missing shared links in every account home",
@@ -195,6 +261,114 @@ const commands: Record<string, Command> = {
     },
   },
 };
+
+function quote(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
+const STATUS_NOTES: Partial<Record<AccountUsage["status"], string>> = {
+  "signed-out": "not signed in",
+  refused: "sign-in refused",
+  paused: "token expired, numbers paused",
+  "rate-limited": "checks rate limited",
+  unreachable: "couldn't reach Anthropic",
+  error: "check failed",
+};
+
+export function printStatus(ctx: Context, registry: Registry, usage: Map<string, AccountUsage>): void {
+  const now = Date.now();
+  ctx.out(`${style.bold(ctx.provider.name)} ${style.dim(`· ${registry.switch} switching at ${registry.threshold}%`)}`);
+  for (const account of registry.accounts) {
+    const info = usage.get(account.id);
+    const isActive = account.id === registry.active;
+    const level = peak(info?.limits, now);
+    const head = [
+      isActive ? style.green("*") : " ",
+      style.bold(account.label),
+      account.plan ? style.dim(account.plan) : "",
+      account.email ? style.dim(account.email) : "",
+      isActive ? style.green("ACTIVE") : "",
+    ].filter(Boolean);
+    ctx.out("");
+    ctx.out(head.join("  "));
+    const note = info && STATUS_NOTES[info.status];
+    if (info?.limits.length) {
+      const rows = info.limits.map((limit) => {
+        const reset = limit.resetsAt ? Date.parse(limit.resetsAt) : NaN;
+        const open = Number.isNaN(reset) || reset > now;
+        const shown = open ? limit.percent : 0;
+        return [
+          `    ${limit.label}`,
+          meter(shown, registry.threshold),
+          `${Math.floor(shown * 100)}%`.padStart(4),
+          Number.isNaN(reset) ? "" : style.dim(open ? `resets in ${duration(reset - now)}` : "reset"),
+        ];
+      });
+      for (const line of table(rows)) ctx.out(line);
+    }
+    if (note || info?.stale) {
+      const when = info?.fetchedAt ? `as of ${age(now - info.fetchedAt)}` : "";
+      ctx.out(style.dim(`    ${[note, when].filter(Boolean).join(", ")}${info?.message ? `. ${info.message}` : ""}`));
+    } else if (!info?.limits.length) {
+      ctx.out(style.dim("    no limits known yet"));
+    }
+    if (level !== undefined && level >= registry.threshold && isActive && registry.accounts.length > 1) {
+      ctx.out(style.yellow(`    over the ${registry.threshold}% threshold`));
+    }
+  }
+}
+
+/**
+ * `agent-switch run`: decide the account, then hand the terminal to the real
+ * Claude Code. Anything that goes wrong before the hand-off warns and starts
+ * Claude as usual: the shell function must never stop `claude` from working.
+ */
+export async function runClaude(provider: Provider, argv: string[]): Promise<number> {
+  let explicit: string | undefined;
+  let check = !process.env.AGENT_SWITCH_NO_CHECK;
+  let i = 0;
+  for (; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--") {
+      i++;
+      break;
+    }
+    if (arg === "--no-check") check = false;
+    else if (arg === "--as") explicit = argv[++i];
+    else if (arg.startsWith("--as=")) explicit = arg.slice(5);
+    else break;
+  }
+  const args = argv.slice(i);
+  const binary = resolveBinary(provider.binary);
+  if (!binary) {
+    process.stderr.write(style.errRed(`agent-switch: \`${provider.binary}\` isn't on your PATH. Install Claude Code first.`) + "\n");
+    return 127;
+  }
+  if (explicit !== undefined && !find(load(provider), explicit)) {
+    process.stderr.write(style.errRed(`agent-switch: no ${provider.name} account named "${explicit}".`) + "\n");
+    return 1;
+  }
+
+  let env: NodeJS.ProcessEnv = process.env;
+  try {
+    let registry = load(provider);
+    let target = launchTarget(provider, registry, explicit);
+    if (check && target.kind === "account" && target.reason === "active") {
+      const result = await checkAndApply(provider);
+      if (result.applied) {
+        process.stderr.write(`${style.errYellow(result.applied.title)}\n${result.applied.body}\n`);
+        if (result.applied.switched) desktopNotify(result.applied.title, result.applied.body);
+      }
+      registry = result.registry;
+      target = launchTarget(provider, registry, explicit);
+    }
+    if (target.kind === "account") env = accountEnv(provider, target.account);
+  } catch (error) {
+    process.stderr.write(style.errYellow(`agent-switch: ${(error as Error).message}. Starting ${provider.name} as usual.`) + "\n");
+    env = process.env;
+  }
+  return runAttached(binary, args, env);
+}
 
 export function registerCommand(name: string, command: Command): void {
   commands[name] = command;
@@ -237,6 +411,8 @@ export function parse(argv: string[]): { command: string; provider: Provider; ar
 }
 
 export async function main(argv: string[]): Promise<number> {
+  // `run` passes everything after it to Claude untouched, flags included.
+  if (argv[0] === "run") return runClaude(claude, argv.slice(1));
   const { command, provider, args, flags } = parse(argv);
   const out = (line = "") => process.stdout.write(line + "\n");
   const err = (line = "") => process.stderr.write(line + "\n");

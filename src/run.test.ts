@@ -1,0 +1,103 @@
+import { test, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { claude } from "./claude.js";
+import { beginLogin, registerLogin } from "./homes.js";
+import { launchTarget } from "./session.js";
+import { load, use } from "./registry.js";
+import { fakeLogin, sandbox } from "./test-helpers.js";
+
+const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
+let home: string;
+let fakeClaude: string;
+
+beforeEach(() => {
+  home = sandbox();
+  fakeLogin(path.join(home, ".claude"), { accountId: "uuid-main", email: "me@work.com" });
+  const pending = beginLogin(claude, "Personal");
+  fakeLogin(pending, { accountId: "uuid-personal", email: "me@home.com" });
+  registerLogin(claude, pending, "Personal");
+  // A stand-in `claude` that reports what it was started with.
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  fakeClaude = path.join(bin, "claude");
+  fs.writeFileSync(
+    fakeClaude,
+    `#!/bin/sh\necho "home=\${CLAUDE_CONFIG_DIR-unset} pin=\${OMARCHY_AGENT_CLAUDE_HOME-unset} account=\${AGENT_SWITCH_ACCOUNT} args=$*"\nexit \${FAKE_EXIT:-0}\n`,
+    { mode: 0o755 },
+  );
+});
+
+function run(args: string[], env: NodeJS.ProcessEnv = {}) {
+  const base = { ...process.env };
+  // The suite may itself run inside a Claude session or Omarchy's wrapper.
+  for (const key of ["CLAUDE_CONFIG_DIR", "OMARCHY_AGENT_CLAUDE_HOME", "AGENT_SWITCH_ACCOUNT"]) delete base[key];
+  const result = spawnSync(process.execPath, [CLI, "run", ...args], {
+    env: { ...base, PATH: `${path.dirname(fakeClaude)}:/usr/bin:/bin`, AGENT_SWITCH_NO_CHECK: "1", AGENT_SWITCH_NO_NOTIFY: "1", ...env },
+    encoding: "utf8",
+  });
+  return { status: result.status, out: result.stdout.trim(), err: result.stderr.trim() };
+}
+
+test("run starts Main with no config dir and pins Omarchy's wrapper to it", () => {
+  const { status, out } = run(["--", "--resume", "-p", "hi"]);
+  assert.equal(status, 0);
+  assert.equal(out, "home=unset pin= account=main args=--resume -p hi");
+});
+
+test("run starts the active added account in its own home", () => {
+  use(claude, "personal");
+  const home = load(claude).accounts[1]!.home;
+  assert.equal(run([]).out, `home=${home} pin=${home} account=personal args=`);
+});
+
+test("--as picks an account for one launch without changing the active one", () => {
+  const home = load(claude).accounts[1]!.home;
+  assert.equal(run(["--as", "personal", "--", "x"]).out, `home=${home} pin=${home} account=personal args=x`);
+  assert.equal(load(claude).active, "main");
+  assert.equal(run(["--as", "nobody"]).status, 1);
+});
+
+test("claude flags pass through untouched even without --", () => {
+  assert.match(run(["--model", "opus", "--help"]).out, /args=--model opus --help$/);
+});
+
+test("a session started inside another keeps its parent's account", () => {
+  use(claude, "personal");
+  assert.match(run([], { AGENT_SWITCH_ACCOUNT: "main" }).out, /^home=unset .*account=main/);
+});
+
+test("a CLAUDE_CONFIG_DIR set by hand is respected", () => {
+  assert.match(run([], { CLAUDE_CONFIG_DIR: "/custom" }).out, /^home=\/custom pin=unset/);
+});
+
+test("the child's exit code comes back", () => {
+  assert.equal(run([], { FAKE_EXIT: "3" }).status, 3);
+});
+
+test("a broken registry still starts Claude", () => {
+  fs.writeFileSync(path.join(process.env.AGENT_SWITCH_STATE_DIR!, "claude.json"), "{garbage");
+  const { status, out } = run([]);
+  assert.equal(status, 0);
+  assert.match(out, /account=main/);
+});
+
+test("launchTarget prefers explicit, then inherited, then external, then active", () => {
+  const registry = load(claude);
+  assert.equal(launchTarget(claude, registry, "personal", {}).kind, "account");
+  assert.deepEqual(launchTarget(claude, registry, undefined, { CLAUDE_CONFIG_DIR: "/x" }), { kind: "external" });
+  const inherited = launchTarget(claude, registry, undefined, { CLAUDE_CONFIG_DIR: "/x", AGENT_SWITCH_ACCOUNT: "personal" });
+  assert.ok(inherited.kind === "account" && inherited.reason === "inherited");
+});
+
+test("a missing claude binary exits 127 with a clear message", () => {
+  const result = spawnSync(process.execPath, [CLI, "run"], {
+    env: { ...process.env, PATH: "/nonexistent", AGENT_SWITCH_NO_CHECK: "1" },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 127);
+  assert.match(result.stderr, /isn't on your PATH/);
+});
