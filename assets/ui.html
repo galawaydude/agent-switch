@@ -63,6 +63,10 @@
   .note.bad { color: var(--bad); }
   .actions { margin-top: 12px; display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
 
+  .banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--warn); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 14px; }
+  .banner p { margin: 0; flex: 1; min-width: 220px; }
+  .banner strong { display: block; }
+  .banner.done { border-color: var(--good); }
   .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px); opacity: 0; pointer-events: none; transition: opacity .2s; }
   .toast.show { opacity: 1; }
@@ -92,6 +96,11 @@
     <button id="refresh" title="Check every account's limits now">↻ Refresh</button>
     <button id="add" class="primary">+ Add account</button>
   </header>
+
+  <section class="banner" id="setup-banner" hidden>
+    <p id="setup-text"><strong>One more step: connect <code>claude</code></strong>Typing <code>claude</code> in a terminal doesn't go through agent-switch yet, so it ignores which account you pick.</p>
+    <button class="primary" id="setup">Connect claude</button>
+  </section>
 
   <section class="mode" aria-label="Switching">
     <label>Near a limit</label>
@@ -194,6 +203,8 @@
 
   function render() {
     if (!state) return;
+    const hooked = !state.shell || state.shell.hooked;
+    if (!hooked) $("setup-banner").hidden = false;
     for (const b of document.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === state.switch));
     $("threshold").value = state.threshold;
     $("threshold-value").textContent = state.threshold + "%";
@@ -254,7 +265,10 @@
     const id = card.dataset.id;
     const account = state.accounts.find((a) => a.id === id);
     if (e.target.closest("[data-use]")) {
-      act(() => api("/api/use", { id }), `New sessions now start as ${account.label}. Running ones stay put.`);
+      const hooked = !state.shell || state.shell.hooked;
+      act(() => api("/api/use", { id }), hooked
+        ? `New claude sessions now start as ${account.label}. Running ones stay put.`
+        : `Switched to ${account.label}, but connect claude (above) for your terminal to follow.`);
     } else if (e.target.closest("[data-remove]")) {
       if (confirm(`Remove ${account.label}? Its sign-in on this machine is deleted.`)) act(() => api("/api/remove", { id }), `Removed ${account.label}.`);
     } else if (e.target.closest("[data-login]")) {
@@ -289,6 +303,20 @@
   }
   $("threshold").addEventListener("input", () => ($("threshold-value").textContent = $("threshold").value + "%"));
   $("threshold").addEventListener("change", () => act(() => api("/api/mode", { mode: state.switch, threshold: $("threshold").value })));
+  $("setup").addEventListener("click", async () => {
+    $("setup").disabled = true;
+    try {
+      const result = await api("/api/setup", {});
+      const files = (result.added && result.added.length ? result.added : result.already || []).join(", ");
+      $("setup-text").innerHTML = `<strong>Connected.</strong>Open a new terminal window and <code>claude</code> will start as the account you pick. (Added to ${esc(files)}.)`;
+      $("setup-banner").classList.add("done");
+      $("setup").hidden = true;
+      if (state && state.shell) state.shell.hooked = true;
+    } catch (e) {
+      toast(e.message, true);
+      $("setup").disabled = false;
+    }
+  });
   $("refresh").addEventListener("click", async () => {
     $("refresh").disabled = true;
     await load(true);

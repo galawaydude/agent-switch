@@ -191,6 +191,7 @@ export async function startUi(options: UiOptions): Promise<{ url: string; close:
       return relay(res, await runCli(["status", "--json", ...(url.searchParams.get("refresh") ? ["--refresh"] : [])]));
     }
     if (route === "POST /api/use") return relay(res, await runCli(["use", text(body.id), "--json"]));
+    if (route === "POST /api/setup") return relay(res, await runCli(["setup", "--json"]));
     if (route === "POST /api/rename") return relay(res, await runCli(["rename", text(body.id), text(body.label), "--json"]));
     if (route === "POST /api/remove") return relay(res, await runCli(["remove", text(body.id), "--json"]));
     if (route === "POST /api/mode") {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 (2026-11-06)
+
+- `agent-switch setup` connects `claude` in your terminal by itself: it adds a guarded, marked line to your shell's startup file (zsh, bash, fish, PowerShell) and `setup --undo` removes it. Symlinked dotfiles stay symlinks.
+- The page shows a **Connect claude** banner until that's done, and `add` and `use` offer it once in the terminal.
+- `doctor` and `status --json` report whether `claude` is connected.
+
 ## 0.3.0 (2026-11-05)
 
 - `agent-switch ui`: a local page to see limits and to add, switch, rename and remove accounts. It's only a display: every action runs an `agent-switch` command.

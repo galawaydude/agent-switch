@@ -16,6 +16,8 @@ export function sandbox(): string {
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.AGENT_SWITCH_PLATFORM;
   delete process.env.AGENT_SWITCH_SECURITY_BIN;
+  delete process.env.ZDOTDIR;
+  delete process.env.XDG_CONFIG_HOME;
   return home;
 }
 

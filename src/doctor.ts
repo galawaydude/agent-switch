@@ -8,6 +8,7 @@ import { resolveBinary } from "./launch.js";
 import { stateRoot, userHome } from "./paths.js";
 import type { Provider } from "./provider.js";
 import { accountHome, load } from "./registry.js";
+import { hookedFiles } from "./setup.js";
 
 export type Level = "ok" | "warn" | "fail";
 
@@ -19,29 +20,6 @@ export interface Finding {
 
 function lstat(file: string): fs.Stats | undefined {
   return fs.lstatSync(file, { throwIfNoEntry: false });
-}
-
-function shellFunctionInstalled(): string | undefined {
-  const home = userHome();
-  const files = [
-    ".bashrc",
-    ".bash_profile",
-    ".zshrc",
-    ".zprofile",
-    ".profile",
-    ".config/fish/config.fish",
-    "Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
-    "Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
-    ".config/powershell/Microsoft.PowerShell_profile.ps1",
-  ].map((f) => path.join(home, f));
-  for (const file of files) {
-    try {
-      if (fs.readFileSync(file, "utf8").includes("agent-switch shell-init")) return file;
-    } catch {
-      // not there
-    }
-  }
-  return undefined;
 }
 
 /** Everything that can quietly go wrong, checked in one place. */
@@ -70,17 +48,9 @@ export function diagnose(provider: Provider, now = Date.now()): Finding[] {
   }
 
   // Shell integration
-  const rc = shellFunctionInstalled();
-  if (rc) add("ok", `The claude shell function is set up in ${rc.replace(userHome(), "~")}.`);
-  else {
-    add(
-      "warn",
-      "Typing `claude` won't use agent-switch yet; only `agent-switch run` will.",
-      isWindows()
-        ? "Add this to your PowerShell profile: agent-switch shell-init powershell | Out-String | Invoke-Expression"
-        : 'Add this to your shell rc: eval "$(agent-switch shell-init)"',
-    );
-  }
+  const hooked = hookedFiles();
+  if (hooked.length) add("ok", `\`claude\` goes through agent-switch (set up in ${hooked.map((f) => f.replace(userHome(), "~")).join(", ")}).`);
+  else add("warn", "Typing `claude` won't use agent-switch yet; only `agent-switch run` will.", "agent-switch setup");
 
   if (process.env[provider.homeEnv] && !process.env.AGENT_SWITCH_ACCOUNT) {
     add(

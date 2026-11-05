@@ -1,6 +1,6 @@
 {
   "name": "agent-switch",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Run Claude Code on several subscriptions from one machine: switch accounts per session, see each one's limits, and move to the account with room before you hit a wall.",
   "license": "MIT",
   "author": "Pavan Kalvakota",

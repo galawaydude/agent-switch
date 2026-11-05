@@ -182,3 +182,12 @@ test("only one sign-in runs at a time", async () => {
   assert.equal(second.status, 409);
   await api("POST", `/api/jobs/${first.body.job}/cancel`, {});
 });
+
+test("Connect claude hooks the shell up through agent-switch setup", async () => {
+  process.env.SHELL = "/bin/bash";
+  assert.equal((await api("GET", "/api/state")).body.shell.hooked, false);
+  const res = await api("POST", "/api/setup", {});
+  assert.equal(res.status, 200);
+  assert.equal(res.body.added.length, 1);
+  assert.equal((await api("GET", "/api/state")).body.shell.hooked, true);
+});

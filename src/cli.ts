@@ -8,6 +8,7 @@ import { age, duration, meter, style, table } from "./format.js";
 import { adopt, importOmarchy, remove, repairLinks } from "./homes.js";
 import { accountEnv, resolveBinary, runAttached } from "./launch.js";
 import { addAccount, eventRunner, reauth } from "./login.js";
+import { currentShell, hookedFiles, isHooked, reloadHint, setup, undo, type SetupResult, type Shell } from "./setup.js";
 import { startUi } from "./ui.js";
 import { isWindows } from "./platform.js";
 import { peak } from "./policy.js";
@@ -77,6 +78,26 @@ const commands: Record<string, Command> = {
     },
   },
 
+  setup: {
+    usage: "setup [--undo] [--json]",
+    summary: "Make `claude` in your terminal use agent-switch (edits your shell's startup file)",
+    run(ctx) {
+      if (ctx.flags.has("undo")) {
+        const cleaned = undo();
+        if (ctx.flags.has("json")) ctx.out(JSON.stringify({ removed: cleaned }));
+        else ctx.out(cleaned.length ? `Removed the hook from ${cleaned.map(tilde).join(", ")}. New terminals start claude directly.` : "There was no agent-switch hook to remove.");
+        return 0;
+      }
+      const result = setup(shellFlag(ctx) ?? currentShell());
+      if (ctx.flags.has("json")) {
+        ctx.out(JSON.stringify(result));
+        return 0;
+      }
+      printSetup(ctx, result);
+      return 0;
+    },
+  },
+
   list: {
     usage: "list [--json]",
     summary: "Show your accounts; * marks the one new sessions use",
@@ -106,6 +127,7 @@ const commands: Record<string, Command> = {
       }
       if (!name && process.stdin.isTTY && ctx.provider.signedIn(ctx.provider.primaryHome())) name = await ask("Name this account (e.g. Personal): ");
       const result = await addAccount(ctx.provider, name, { log: ctx.out });
+      await offerSetup(ctx);
       const names = result.accounts.map(describe).join(", ");
       if (result.kind === "primary") ctx.out(style.green(`Signed in as ${names}. This is your Main account.`));
       else if (result.kind === "recovered") ctx.out(style.green(`Finished an interrupted sign-in: added ${names}.`));
@@ -145,7 +167,7 @@ const commands: Record<string, Command> = {
   use: {
     usage: "use [account|next]",
     summary: "Choose the account new sessions start as (running ones stay put)",
-    run(ctx) {
+    async run(ctx) {
       const { previous, current } = use(ctx.provider, ctx.args.join(" ") || "next");
       if (ctx.flags.has("json")) {
         ctx.out(JSON.stringify({ previous, current, signedIn: ctx.provider.signedIn(current.home || ctx.provider.primaryHome()) }));
@@ -159,6 +181,7 @@ const commands: Record<string, Command> = {
       if (!ctx.provider.signedIn(current.home || ctx.provider.primaryHome())) {
         ctx.err(style.errYellow(`${current.label} isn't signed in. Run: agent-switch login ${current.id}`));
       }
+      await offerSetup(ctx);
       return 0;
     },
   },
@@ -278,7 +301,7 @@ const commands: Record<string, Command> = {
       const registry = load(ctx.provider);
       const usage = await collectAll(ctx.provider, registry.accounts, { force: ctx.flags.has("refresh") });
       if (ctx.flags.has("json")) {
-        ctx.out(JSON.stringify({ ...registry, usage: Object.fromEntries(usage) }, null, 2));
+        ctx.out(JSON.stringify({ ...registry, usage: Object.fromEntries(usage), shell: { hooked: isHooked(), files: hookedFiles() } }, null, 2));
         return 0;
       }
       printStatus(ctx, registry, usage);
@@ -350,6 +373,39 @@ async function withEvents(ctx: Context, body: (emit: (event: string, detail: str
     emit("error", error instanceof Error ? error.message : String(error));
     return 1;
   }
+}
+
+function tilde(file: string): string {
+  const home = process.env.HOME || "";
+  return home && file.startsWith(home) ? "~" + file.slice(home.length) : file;
+}
+
+function shellFlag(ctx: Context): Shell | undefined {
+  for (const shell of ["zsh", "bash", "fish", "powershell"] as const) if (ctx.flags.has(shell) || ctx.args[0] === shell) return shell;
+  return undefined;
+}
+
+function printSetup(ctx: Context, result: SetupResult): void {
+  if (result.already.length) {
+    ctx.out(`claude already uses agent-switch (hooked in ${result.already.map(tilde).join(", ")}).`);
+    return;
+  }
+  ctx.out(style.green(`Done: added agent-switch to ${result.added.map(tilde).join(", ")}.`));
+  ctx.out(`Open a new terminal and \`claude\` will start as the account you picked.`);
+  ctx.out(style.dim(`In a terminal that's already open, run: ${reloadHint(result.shell, result.added[0]!)}`));
+}
+
+/**
+ * After an add or a switch, offer once to hook `claude` up: without it the
+ * choice has no effect on a plain `claude`.
+ */
+async function offerSetup(ctx: Context): Promise<void> {
+  if (isHooked() || !process.stdin.isTTY || process.env.AGENT_SWITCH_ACCOUNT) return;
+  ctx.out("");
+  ctx.out(style.yellow("`claude` in your terminal doesn't go through agent-switch yet, so it ignores this choice."));
+  const answer = (await ask("Connect it now? It adds one line to your shell's startup file. [Y/n] ")).toLowerCase();
+  if (answer === "" || answer === "y" || answer === "yes") printSetup(ctx, setup(currentShell()));
+  else ctx.out(style.dim("Skipped. Run agent-switch setup whenever you like."));
 }
 
 function defaultShell(): string {

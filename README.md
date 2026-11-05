@@ -20,29 +20,18 @@ brew install galawaydude/tap/agent-switch
 No Homebrew? With Node 20+:
 
 ```sh
-npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.3.0/agent-switch-0.3.0.tgz
+npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.4.0/agent-switch-0.4.0.tgz
 ```
 
 You also need [Claude Code](https://docs.claude.com/claude-code), signed in as usual. That login becomes your **Main** account.
 
-**2. Make `claude` use it.** Add one line to your shell's startup file, then open a new terminal:
+**2. Connect `claude`**
 
 ```sh
-echo 'eval "$(agent-switch shell-init)"' >> ~/.zshrc     # macOS (zsh)
-echo 'eval "$(agent-switch shell-init)"' >> ~/.bashrc    # Linux (bash)
+agent-switch setup
 ```
 
-<details>
-<summary>fish or PowerShell</summary>
-
-```sh
-# fish: add to ~/.config/fish/config.fish
-agent-switch shell-init fish | source
-
-# PowerShell: add to $PROFILE
-agent-switch shell-init powershell | Out-String | Invoke-Expression
-```
-</details>
+This adds one line to your shell's startup file (zsh, bash, fish or PowerShell), so typing `claude` starts as the account you pick. Open a new terminal afterwards. `agent-switch setup --undo` takes the line back out. The page also offers a **Connect claude** button if you skip this.
 
 **3. Open it**
 
@@ -114,6 +103,7 @@ More detail is in [docs/DESIGN.md](docs/DESIGN.md).
 | `mode [manual\|auto] [threshold]` | Warn or switch automatically near a limit |
 | `check [--notify] [--quiet]` | Refresh limits and apply the switching rule (for cron) |
 | `run [--as <account>] [-- args]` | Start Claude Code (what the `claude` function calls) |
+| `setup [--undo]` | Connect `claude` in your terminal (edits your shell's startup file) |
 | `shell-init [bash\|zsh\|fish\|powershell]` | Print the `claude` shell function |
 | `adopt <dir> [name]` | Register a config folder that's already signed in |
 | `doctor` | Check the setup |
