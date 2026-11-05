@@ -218,7 +218,7 @@ export function recover(provider: Provider): Account[] {
   return recovered;
 }
 
-/** v0.1 signed in under .pending/ and moved the home afterwards (Linux only). */
+/** v0.1 signed in under .pending/ and moved the home afterwards (Linux only, so moving was safe). */
 function recoverLegacyPending(provider: Provider, recovered: Account[]): void {
   const pending = pendingRoot(provider.id);
   if (!fs.existsSync(pending)) return;
