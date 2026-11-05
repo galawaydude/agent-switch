@@ -4,9 +4,6 @@ agent-switch lets one machine run Claude Code on several subscriptions. It
 picks which account a session starts as, shows every account's limits, and
 moves new sessions to an account with room before the active one runs out.
 
-The design follows Omarchy 4.5's agent accounts, which proved it out, but
-nothing here depends on Omarchy.
-
 ## Principles
 
 1. **Choose at launch, never mid-flight.** An account is picked when a
@@ -78,9 +75,7 @@ clamped to 50 to 100. Writes go through a lock file and an atomic rename.
 3. Set `CLAUDE_CONFIG_DIR` to the active account's home. The primary account
    leaves it unset, because Claude Code's implicit default is also what
    selects `~/.claude.json`.
-4. Set `OMARCHY_AGENT_CLAUDE_HOME` to the same value, so Omarchy's own
-   `claude` wrapper, if present, keeps our choice instead of applying its own.
-5. Spawn the real `claude` binary with inherited stdio, forward signals, and
+4. Spawn the real `claude` binary with inherited stdio, forward signals, and
    exit with its exit code.
 
 If any step before the spawn throws, it prints one warning line and launches
@@ -102,8 +97,7 @@ If any step before the spawn throws, it prints one warning line and launches
 
 `agent-switch adopt <dir> [label]` registers an existing signed-in home in
 place, without copying credentials. Copying would leave two homes sharing one
-rotating refresh token. `agent-switch import omarchy` adopts every Omarchy
-Claude account.
+rotating refresh token.
 
 ## Limits
 
