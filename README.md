@@ -21,6 +21,18 @@ Claude · manual switching at 95%
     Weekly        ░░░░░░░░░░░░░░░░░░░░    0%  resets in 6d 0h
 ```
 
+## Do you need this?
+
+**On [Omarchy](https://omarchy.org) 4.5 or newer, no.** Omarchy has this built in as *agent accounts* (`omarchy agent account`). It adds a bar panel with live limit meters and covers Codex and Grok as well as Claude. Use that.
+
+agent-switch is the same idea for everywhere else:
+
+- macOS and Windows
+- Linux setups that don't run Omarchy
+- machines where you want it as a plain CLI, with no desktop integration
+
+Already using Omarchy's accounts and moving to another machine? `agent-switch import omarchy` takes over existing Omarchy logins in place.
+
 ## How it works
 
 agent-switch is a launcher, not a proxy. It never sits between Claude Code and Anthropic.
