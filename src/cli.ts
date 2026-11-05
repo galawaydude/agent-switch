@@ -5,9 +5,10 @@ import { createRequire } from "node:module";
 import { PROVIDERS, claude } from "./claude.js";
 import { diagnose } from "./doctor.js";
 import { age, duration, meter, style, table } from "./format.js";
-import { adopt, importOmarchy, repairLinks } from "./homes.js";
+import { adopt, importOmarchy, remove, repairLinks } from "./homes.js";
 import { accountEnv, resolveBinary, runAttached } from "./launch.js";
 import { addAccount, reauth } from "./login.js";
+import { isWindows } from "./platform.js";
 import { peak } from "./policy.js";
 import { checkAndApply, desktopNotify, launchTarget } from "./session.js";
 import { collectAll, type AccountUsage } from "./usage.js";
@@ -19,7 +20,6 @@ import {
   mustFind,
   mutate,
   refreshIdentities,
-  remove,
   rename,
   setMode,
   use,
@@ -84,7 +84,9 @@ const commands: Record<string, Command> = {
     usage: "add [name]",
     summary: "Sign in to another subscription in a private browser window",
     async run(ctx) {
-      const result = await addAccount(ctx.provider, ctx.args.join(" "), ctx.out);
+      let name = ctx.args.join(" ").trim();
+      if (!name && process.stdin.isTTY && ctx.provider.signedIn(ctx.provider.primaryHome())) name = await ask("Name this account (e.g. Personal): ");
+      const result = await addAccount(ctx.provider, name, ctx.out);
       const names = result.accounts.map(describe).join(", ");
       if (result.kind === "primary") ctx.out(style.green(`Signed in as ${names}. This is your Main account.`));
       else if (result.kind === "recovered") ctx.out(style.green(`Finished an interrupted sign-in: added ${names}.`));
@@ -202,19 +204,24 @@ const commands: Record<string, Command> = {
   },
 
   "shell-init": {
-    usage: "shell-init [bash|zsh|fish]",
-    summary: "Print the `claude` shell function; add `eval \"$(agent-switch shell-init)\"` to your shell rc",
+    usage: "shell-init [bash|zsh|fish|powershell]",
+    summary: "Print the `claude` shell function to load from your shell's startup file",
     run(ctx) {
-      const shell = ctx.args[0] || path.basename(process.env.SHELL || "bash");
-      const self = resolveBinary("agent-switch") ? "agent-switch" : `${quote(process.execPath)} ${quote(fs.realpathSync(process.argv[1]!))}`;
+      const shell = (ctx.args[0] || defaultShell()).toLowerCase();
+      const onPath = Boolean(resolveBinary("agent-switch"));
+      const script = fs.realpathSync(process.argv[1]!);
+      ctx.out("# agent-switch: start Claude Code as the account you picked");
       if (shell === "fish") {
-        ctx.out("# agent-switch: start Claude Code as the account you picked");
+        const self = onPath ? "command agent-switch" : `${quote(process.execPath)} ${quote(script)}`;
         ctx.out(`function claude --wraps claude; ${self} run -- $argv; end`);
       } else if (shell === "bash" || shell === "zsh" || shell === "sh") {
-        ctx.out("# agent-switch: start Claude Code as the account you picked");
-        ctx.out(`claude() { ${self === "agent-switch" ? "command agent-switch" : self} run -- "$@"; }`);
+        const self = onPath ? "command agent-switch" : `${quote(process.execPath)} ${quote(script)}`;
+        ctx.out(`claude() { ${self} run -- "$@"; }`);
+      } else if (shell === "powershell" || shell === "pwsh") {
+        const self = onPath ? "agent-switch" : `'${process.execPath.replace(/'/g, "''")}' '${script.replace(/'/g, "''")}'`;
+        ctx.out(`function claude { & ${self} run -- @args }`);
       } else {
-        throw new UsageError("agent-switch shell-init [bash|zsh|fish]");
+        throw new UsageError("agent-switch shell-init [bash|zsh|fish|powershell]");
       }
       return 0;
     },
@@ -277,12 +284,30 @@ const commands: Record<string, Command> = {
     summary: "Re-create missing shared links in every account home",
     hidden: true,
     run(ctx) {
-      repairLinks(ctx.provider, load(ctx.provider));
-      ctx.out("Shared links are in place.");
+      const unshared = repairLinks(ctx.provider, load(ctx.provider));
+      if (unshared.length) {
+        ctx.out(style.yellow(`Couldn't link ${unshared.join(", ")}: Windows needs Developer Mode for file links.`));
+        ctx.out(style.dim("Turn it on in Settings > System > For developers, then run agent-switch repair again."));
+      } else ctx.out("Shared links are in place.");
       return 0;
     },
   },
 };
+
+function defaultShell(): string {
+  if (process.env.SHELL) return path.basename(process.env.SHELL);
+  return isWindows() ? "powershell" : "bash";
+}
+
+async function ask(question: string): Promise<string> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
+  }
+}
 
 function quote(word: string): string {
   return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;

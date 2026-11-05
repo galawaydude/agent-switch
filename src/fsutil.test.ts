@@ -15,7 +15,7 @@ test("writeJsonAtomic writes private files and leaves no temp files", () => {
   writeJsonAtomic(file, { a: 1 });
   writeJsonAtomic(file, { a: 2 });
   assert.deepEqual(readJson(file), { a: 2 });
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ["a.json"]);
 });
 

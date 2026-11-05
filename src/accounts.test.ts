@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { claude, planLabel } from "./claude.js";
-import { adopt, beginLogin, importOmarchy, linkShared, recover, registerLogin, RECEIPT } from "./homes.js";
+import { adopt, beginLogin, importOmarchy, linkShared, recover, registerLogin, remove, RECEIPT } from "./homes.js";
 import { accountEnv } from "./launch.js";
 import { homesRoot, registryPath } from "./paths.js";
-import { AccountError, find, load, normalize, remove, rename, save, setMode, use } from "./registry.js";
+import { AccountError, find, load, normalize, rename, save, setMode, use } from "./registry.js";
 import { fakeLogin, sandbox } from "./test-helpers.js";
 
 let home: string;
@@ -70,11 +70,11 @@ test("adding an account gives it its own login and shares everything else", () =
   assert.equal(account.home, path.join(homesRoot("claude"), "personal"));
   const projects = path.join(account.home, "projects");
   assert.ok(fs.lstatSync(projects).isSymbolicLink());
-  assert.equal(fs.readlinkSync(projects), path.join(home, ".claude", "projects"));
+  assert.equal(fs.realpathSync(projects), fs.realpathSync(path.join(home, ".claude", "projects")));
   assert.ok(fs.lstatSync(path.join(account.home, "settings.json")).isSymbolicLink());
   assert.ok(!fs.lstatSync(path.join(account.home, ".credentials.json")).isSymbolicLink());
   assert.ok(!fs.existsSync(path.join(account.home, RECEIPT)));
-  assert.equal(fs.statSync(account.home).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(fs.statSync(account.home).mode & 0o777, 0o700);
   assert.equal(load(claude).accounts.length, 2);
 });
 
@@ -149,28 +149,52 @@ test("mode validates and stores the threshold", () => {
   assert.throws(() => setMode(claude, "yolo"), /manual or auto/);
 });
 
-test("recover registers a home that was moved into place but never saved", () => {
-  const account = addAccount("Personal", "uuid-personal", "me@home.com");
-  // Simulate a crash after the move: registry lacks the entry, receipt remains.
-  const registry = load(claude);
-  registry.accounts = registry.accounts.filter((a) => a.id !== "personal");
-  save(claude, registry);
-  fs.writeFileSync(path.join(account.home, RECEIPT), JSON.stringify({ label: "Personal", owner: 0, entry: account }));
-  const recovered = recover(claude);
-  assert.deepEqual(recovered.map((a) => a.id), ["personal"]);
-  assert.ok(find(load(claude), "personal"));
-  assert.equal(fs.existsSync(path.join(account.home, RECEIPT)), false);
+test("sign-in happens in the account's final home, which never moves", () => {
+  const pending = beginLogin(claude, "Personal");
+  assert.equal(pending, path.join(homesRoot("claude"), "personal"));
+  fakeLogin(pending, { accountId: "uuid-personal", email: "me@home.com" });
+  const account = registerLogin(claude, pending, "Personal");
+  assert.equal(account.home, pending);
 });
 
-test("recover finishes a completed sign-in whose add process died, and drops empty ones", () => {
+test("two sign-ins in progress get different homes", () => {
+  const a = beginLogin(claude, "Side");
+  const b = beginLogin(claude, "Side");
+  assert.notEqual(a, b);
+});
+
+test("recover registers a finished sign-in whose add died, and drops empty ones", () => {
   const done = beginLogin(claude, "Late");
   fakeLogin(done, { accountId: "uuid-late", email: "late@x.com" });
   fs.writeFileSync(path.join(done, RECEIPT), JSON.stringify({ label: "Late", owner: 999999999 }));
   const empty = beginLogin(claude, "Empty");
   fs.writeFileSync(path.join(empty, RECEIPT), JSON.stringify({ label: "Empty", owner: 999999999 }));
+  const live = beginLogin(claude, "Live"); // owned by this test process: still running
+  fs.writeFileSync(path.join(live, RECEIPT), JSON.stringify({ label: "Live", owner: process.ppid }));
   const recovered = recover(claude);
   assert.deepEqual(recovered.map((a) => a.label), ["Late"]);
   assert.equal(fs.existsSync(empty), false);
+  assert.equal(fs.existsSync(live), true);
+});
+
+test("recover finishes a home registered on disk whose registry save was lost", () => {
+  const account = addAccount("Personal", "uuid-personal", "me@home.com");
+  const registry = load(claude);
+  registry.accounts = registry.accounts.filter((a) => a.id !== "personal");
+  save(claude, registry);
+  fs.writeFileSync(path.join(account.home, RECEIPT), JSON.stringify({ label: "Personal", owner: 0 }));
+  assert.deepEqual(recover(claude).map((a) => a.id), ["personal"]);
+  assert.ok(find(load(claude), "personal"));
+});
+
+test("recover takes over a v0.1 sign-in left under .pending", () => {
+  const old = path.join(homesRoot("claude"), ".pending", "login-abc");
+  fakeLogin(old, { accountId: "uuid-old", email: "old@x.com" });
+  fs.writeFileSync(path.join(old, RECEIPT), JSON.stringify({ label: "Old", owner: 0 }));
+  const [account] = recover(claude);
+  assert.equal(account?.id, "old");
+  assert.equal(account?.home, path.join(homesRoot("claude"), "old"));
+  assert.equal(fs.existsSync(path.join(homesRoot("claude"), ".pending")), false);
 });
 
 test("adopt registers an existing signed-in home in place and refuses duplicates", () => {
@@ -222,7 +246,7 @@ test("accountEnv points added accounts at their home and leaves Main implicit", 
 
 test("the registry file is private", () => {
   addAccount("Personal", "uuid-personal", "me@home.com");
-  assert.equal(fs.statSync(registryPath("claude")).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(registryPath("claude")).mode & 0o777, 0o600);
   const raw = fs.readFileSync(registryPath("claude"), "utf8");
   assert.ok(!raw.includes("access-"), "tokens must never enter the registry");
 });

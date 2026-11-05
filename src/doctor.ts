@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { credentialsFile, readOauth } from "./claude.js";
 import { readRecord } from "./fsutil.js";
+import { isMac, isWindows, platform } from "./platform.js";
 import { resolveBinary } from "./launch.js";
 import { stateRoot, userHome } from "./paths.js";
 import type { Provider } from "./provider.js";
@@ -22,7 +23,17 @@ function lstat(file: string): fs.Stats | undefined {
 
 function shellFunctionInstalled(): string | undefined {
   const home = userHome();
-  const files = [".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile", ".config/fish/config.fish"].map((f) => path.join(home, f));
+  const files = [
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".zprofile",
+    ".profile",
+    ".config/fish/config.fish",
+    "Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
+    "Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
+    ".config/powershell/Microsoft.PowerShell_profile.ps1",
+  ].map((f) => path.join(home, f));
   for (const file of files) {
     try {
       if (fs.readFileSync(file, "utf8").includes("agent-switch shell-init")) return file;
@@ -39,9 +50,12 @@ export function diagnose(provider: Provider, now = Date.now()): Finding[] {
   const add = (level: Level, message: string, fix?: string) => findings.push({ level, message, fix });
 
   // Platform
-  if (process.platform === "linux") add("ok", "Linux: Claude Code keeps logins in files agent-switch can manage.");
-  else if (process.platform === "darwin") {
-    add("fail", "macOS keeps Claude Code's login in the Keychain, which agent-switch doesn't manage yet.", "Track macOS support in the project's issues.");
+  const os = platform();
+  if (os === "linux") add("ok", "Linux: logins live in each account's .credentials.json.");
+  else if (os === "darwin") add("ok", "macOS: logins live in the Keychain, one entry per account folder.");
+  else if (os === "win32") {
+    add("ok", "Windows: logins live in each account's .credentials.json.");
+    add("warn", "On Windows agent-switch can't see which account a running session uses, so remove can't protect it.", "Quit Claude Code sessions before removing an account.");
   } else add("warn", `${process.platform} is untested.`);
 
   const major = Number(process.versions.node.split(".")[0]);
@@ -62,7 +76,9 @@ export function diagnose(provider: Provider, now = Date.now()): Finding[] {
     add(
       "warn",
       "Typing `claude` won't use agent-switch yet; only `agent-switch run` will.",
-      'Add this to your shell rc: eval "$(agent-switch shell-init)"',
+      isWindows()
+        ? "Add this to your PowerShell profile: agent-switch shell-init powershell | Out-String | Invoke-Expression"
+        : 'Add this to your shell rc: eval "$(agent-switch shell-init)"',
     );
   }
 
@@ -97,7 +113,7 @@ export function diagnose(provider: Provider, now = Date.now()): Finding[] {
       add("warn", `${name}: its home is now signed in as ${signedInAs.email || signedInAs.accountId}.`, "Run agent-switch list to refresh, or sign it in again.");
     }
     const creds = credentialsFile(home);
-    if (lstat(creds)?.isSymbolicLink()) {
+    if (!isMac() && lstat(creds)?.isSymbolicLink()) {
       add("fail", `${name}: its login file is a link, so it shares a login with another home.`, `Remove ${creds} and run agent-switch login ${account.id}`);
     }
     const oauth = readOauth(home);
@@ -111,7 +127,10 @@ export function diagnose(provider: Provider, now = Date.now()): Finding[] {
     }
     if (!account.primary) {
       const missing = [...provider.sharedDirs, ...provider.sharedFiles].filter((n) => !lstat(path.join(home, n)));
-      if (missing.length) add("warn", `${name}: not sharing ${missing.join(", ")} with your main setup.`, "agent-switch repair");
+      if (missing.length) {
+        const fix = isWindows() ? "Turn on Developer Mode (Settings > System > For developers), then: agent-switch repair" : "agent-switch repair";
+        add("warn", `${name}: not sharing ${missing.join(", ")} with your main setup.`, fix);
+      }
     }
   }
 

@@ -2,34 +2,69 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkdirPrivate } from "./fsutil.js";
 import { resolveBinary, runAttached } from "./launch.js";
-import { stateRoot } from "./paths.js";
+import { stateRoot, userHome } from "./paths.js";
+import { isMac, isWindows } from "./platform.js";
 import type { Provider } from "./provider.js";
 import { AccountError, find, load, type Account } from "./registry.js";
-import { beginLogin, recover, registerLogin } from "./homes.js";
+import { beginLogin, RECEIPT, recover, registerLogin, removeHome } from "./homes.js";
 
-interface BrowserChoice {
+export interface BrowserChoice {
   name: string;
-  /** Shell words; the URL is appended as "$1". */
-  command: string;
+  /** Program and flags; the URL is appended. Empty when `command` is used. */
+  argv: string[];
+  /** A raw shell command from AGENT_SWITCH_BROWSER; the URL is appended. */
+  command?: string;
 }
 
-const PRIVATE_BROWSERS: { binary: string; flag: string }[] = [
-  { binary: "omarchy-launch-browser", flag: "--private" },
-  { binary: "chromium", flag: "--incognito" },
-  { binary: "google-chrome-stable", flag: "--incognito" },
-  { binary: "google-chrome", flag: "--incognito" },
-  { binary: "brave", flag: "--incognito" },
-  { binary: "brave-browser", flag: "--incognito" },
-  { binary: "vivaldi", flag: "--incognito" },
-  { binary: "microsoft-edge", flag: "--inprivate" },
-  { binary: "microsoft-edge-stable", flag: "--inprivate" },
-  { binary: "firefox", flag: "--private-window" },
-  { binary: "librewolf", flag: "--private-window" },
-  { binary: "zen-browser", flag: "--private-window" },
+const LINUX_BROWSERS: [string, string][] = [
+  ["omarchy-launch-browser", "--private"],
+  ["chromium", "--incognito"],
+  ["google-chrome-stable", "--incognito"],
+  ["google-chrome", "--incognito"],
+  ["brave", "--incognito"],
+  ["brave-browser", "--incognito"],
+  ["vivaldi", "--incognito"],
+  ["microsoft-edge", "--inprivate"],
+  ["microsoft-edge-stable", "--inprivate"],
+  ["firefox", "--private-window"],
+  ["librewolf", "--private-window"],
+  ["zen-browser", "--private-window"],
 ];
 
-function shellQuote(word: string): string {
-  return `'${word.replace(/'/g, `'\\''`)}'`;
+const MAC_BROWSERS: [string, string][] = [
+  ["Google Chrome", "--incognito"],
+  ["Brave Browser", "--incognito"],
+  ["Chromium", "--incognito"],
+  ["Vivaldi", "--incognito"],
+  ["Microsoft Edge", "--inprivate"],
+  ["Firefox", "--private-window"],
+  ["LibreWolf", "--private-window"],
+];
+
+function windowsBrowsers(): [string, string, string][] {
+  const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA].filter(Boolean) as string[];
+  const apps: [string, string, string][] = [
+    ["Chrome", "Google\\Chrome\\Application\\chrome.exe", "--incognito"],
+    ["Edge", "Microsoft\\Edge\\Application\\msedge.exe", "--inprivate"],
+    ["Brave", "BraveSoftware\\Brave-Browser\\Application\\brave.exe", "--incognito"],
+    ["Vivaldi", "Vivaldi\\Application\\vivaldi.exe", "--incognito"],
+    ["Firefox", "Mozilla Firefox\\firefox.exe", "--private-window"],
+  ];
+  const found: [string, string, string][] = [];
+  for (const [name, rel, flag] of apps) {
+    for (const root of roots) {
+      const exe = path.join(root, ...rel.split("\\"));
+      if (fs.existsSync(exe)) {
+        found.push([name, exe, flag]);
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+function macApp(name: string): boolean {
+  return [path.join("/Applications", `${name}.app`), path.join(userHome(), "Applications", `${name}.app`)].some((p) => fs.existsSync(p));
 }
 
 /**
@@ -39,20 +74,41 @@ function shellQuote(word: string): string {
  */
 export function privateBrowser(): BrowserChoice | undefined {
   const override = process.env.AGENT_SWITCH_BROWSER;
-  if (override) return { name: override, command: override };
-  for (const { binary, flag } of PRIVATE_BROWSERS) {
+  if (override) return { name: override, argv: [], command: override };
+  if (isMac()) {
+    for (const [app, flag] of MAC_BROWSERS) if (macApp(app)) return { name: app, argv: ["open", "-na", app, "--args", flag] };
+    return undefined;
+  }
+  if (isWindows()) {
+    const [first] = windowsBrowsers();
+    return first ? { name: first[0], argv: [first[1], first[2]] } : undefined;
+  }
+  for (const [binary, flag] of LINUX_BROWSERS) {
     const found = resolveBinary(binary);
-    if (found) return { name: binary, command: `${shellQuote(found)} ${flag}` };
+    if (found) return { name: binary, argv: [found, flag] };
   }
   return undefined;
 }
 
-/** Write a one-line launcher that $BROWSER can point at. */
+function shellQuote(word: string): string {
+  return `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The launcher script $BROWSER points at: it opens its first argument privately. */
+export function browserScriptText(choice: BrowserChoice, windows = isWindows()): string {
+  if (windows) {
+    const program = choice.command ?? choice.argv.map((a) => `"${a}"`).join(" ");
+    return `@echo off\r\nstart "" ${program} "%~1"\r\n`;
+  }
+  const program = choice.command ?? choice.argv.map(shellQuote).join(" ");
+  return `#!/bin/sh\n${program} "$1" >/dev/null 2>&1 &\n`;
+}
+
 function browserScript(choice: BrowserChoice): string {
   const dir = path.join(stateRoot(), "run");
   mkdirPrivate(dir);
-  const file = path.join(dir, `browser-${process.pid}.sh`);
-  fs.writeFileSync(file, `#!/bin/sh\nexec ${choice.command} "$1" >/dev/null 2>&1 &\n`, { mode: 0o700 });
+  const file = path.join(dir, `browser-${process.pid}${isWindows() ? ".cmd" : ".sh"}`);
+  fs.writeFileSync(file, browserScriptText(choice), { mode: 0o700 });
   return file;
 }
 
@@ -130,8 +186,9 @@ export async function addAccount(provider: Provider, label: string, log: (line: 
   } finally {
     process.off("SIGINT", onSignal);
     if (browser) fs.rmSync(browser, { force: true });
-    // registerLogin moves or removes the home; anything left was abandoned.
-    if (fs.existsSync(home) && (interrupted || !provider.signedIn(home))) fs.rmSync(home, { recursive: true, force: true });
+    // A registered home has lost its receipt. One that still has it was
+    // cancelled or never signed in; a signed-in one is left for `recover`.
+    if (fs.existsSync(path.join(home, RECEIPT)) && (interrupted || !provider.signedIn(home))) removeHome(provider, home);
   }
 }
 

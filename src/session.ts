@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { duration } from "./format.js";
 import { resolveBinary } from "./launch.js";
+import { isMac } from "./platform.js";
 import { decide, type Decision } from "./policy.js";
 import type { Provider } from "./provider.js";
 import { active, find, load, mutate, type Account, type Registry } from "./registry.js";
@@ -131,7 +132,7 @@ export function desktopNotify(title: string, body: string, urgent = false): void
   if (process.env.AGENT_SWITCH_NO_NOTIFY) return;
   let command: string | undefined;
   let args: string[] = [];
-  if (process.platform === "darwin") {
+  if (isMac()) {
     command = "osascript";
     const quote = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
     args = ["-e", `display notification ${quote(body)} with title ${quote(title)}`];

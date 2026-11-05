@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { readRecord, isRecord, str, writeJsonAtomic } from "./fsutil.js";
+import { readCredentials } from "./credentials.js";
 import { userHome } from "./paths.js";
 import type { Identity, Provider } from "./provider.js";
 
@@ -28,12 +29,10 @@ export function accountFile(home: string): string {
     : path.join(home, ".claude.json");
 }
 
-export function credentialsFile(home: string): string {
-  return path.join(home, ".credentials.json");
-}
+export { credentialsFile } from "./credentials.js";
 
 export function readOauth(home: string): ClaudeOauth | undefined {
-  const login = readRecord(credentialsFile(home)).claudeAiOauth;
+  const login = readCredentials(home).claudeAiOauth;
   if (!isRecord(login)) return undefined;
   const expiresAt = Number(login.expiresAt);
   const refreshExpiresAt = Number(login.refreshTokenExpiresAt);

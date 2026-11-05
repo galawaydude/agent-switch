@@ -22,21 +22,37 @@ beforeEach(() => {
   registerLogin(claude, pending, "Personal");
   // A stand-in `claude` that reports what it was started with.
   const bin = path.join(home, "bin");
-  fs.mkdirSync(bin);
-  fakeClaude = path.join(bin, "claude");
+  fs.mkdirSync(path.join(bin, "node_modules", "fake"), { recursive: true });
+  const script = path.join(bin, "node_modules", "fake", "cli.js");
   fs.writeFileSync(
-    fakeClaude,
-    `#!/bin/sh\necho "home=\${CLAUDE_CONFIG_DIR-unset} pin=\${OMARCHY_AGENT_CLAUDE_HOME-unset} account=\${AGENT_SWITCH_ACCOUNT} args=$*"\nexit \${FAKE_EXIT:-0}\n`,
-    { mode: 0o755 },
+    script,
+    `const e = process.env;
+console.log("home=" + (e.CLAUDE_CONFIG_DIR ?? "unset") + " pin=" + (e.OMARCHY_AGENT_CLAUDE_HOME ?? "unset") + " account=" + (e.AGENT_SWITCH_ACCOUNT ?? "") + " args=" + process.argv.slice(2).join(" "));
+process.exit(Number(e.FAKE_EXIT || 0));
+`,
   );
+  if (process.platform === "win32") {
+    // The shape npm writes for a global CLI.
+    fakeClaude = path.join(bin, "claude.cmd");
+    fs.writeFileSync(fakeClaude, `@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\fake\\cli.js" %*\r\n`);
+  } else {
+    fakeClaude = path.join(bin, "claude");
+    fs.writeFileSync(fakeClaude, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+  }
 });
+
+function testPath(): string {
+  const system = process.platform === "win32" ? (process.env.Path ?? process.env.PATH ?? "") : "/usr/bin:/bin";
+  return `${path.dirname(fakeClaude)}${path.delimiter}${system}`;
+}
 
 function run(args: string[], env: NodeJS.ProcessEnv = {}) {
   const base = { ...process.env };
   // The suite may itself run inside a Claude session or Omarchy's wrapper.
   for (const key of ["CLAUDE_CONFIG_DIR", "OMARCHY_AGENT_CLAUDE_HOME", "AGENT_SWITCH_ACCOUNT"]) delete base[key];
+  delete base.Path;
   const result = spawnSync(process.execPath, [CLI, "run", ...args], {
-    env: { ...base, PATH: `${path.dirname(fakeClaude)}:/usr/bin:/bin`, AGENT_SWITCH_NO_CHECK: "1", AGENT_SWITCH_NO_NOTIFY: "1", ...env },
+    env: { ...base, PATH: testPath(), AGENT_SWITCH_NO_CHECK: "1", AGENT_SWITCH_NO_NOTIFY: "1", ...env },
     encoding: "utf8",
   });
   return { status: result.status, out: result.stdout.trim(), err: result.stderr.trim() };
@@ -71,7 +87,9 @@ test("a session started inside another keeps its parent's account", () => {
 });
 
 test("a CLAUDE_CONFIG_DIR set by hand is respected", () => {
-  assert.match(run([], { CLAUDE_CONFIG_DIR: "/custom" }).out, /^home=\/custom pin=unset/);
+  const custom = path.join(home, "custom");
+  assert.equal(run([], { CLAUDE_CONFIG_DIR: custom }).out.split(" pin=")[0], `home=${custom}`);
+  assert.match(run([], { CLAUDE_CONFIG_DIR: custom }).out, / pin=unset /);
 });
 
 test("the child's exit code comes back", () => {
@@ -95,14 +113,14 @@ test("launchTarget prefers explicit, then inherited, then external, then active"
 
 test("a missing claude binary exits 127 with a clear message", () => {
   const result = spawnSync(process.execPath, [CLI, "run"], {
-    env: { ...process.env, PATH: "/nonexistent", AGENT_SWITCH_NO_CHECK: "1" },
+    env: { ...process.env, PATH: path.join(home, "nonexistent"), Path: path.join(home, "nonexistent"), AGENT_SWITCH_NO_CHECK: "1" },
     encoding: "utf8",
   });
   assert.equal(result.status, 127);
   assert.match(result.stderr, /isn't on your PATH/);
 });
 
-test("one Ctrl+C reaches Claude once, and a TERM to the wrapper is passed on", async () => {
+test("one Ctrl+C reaches Claude once, and a TERM to the wrapper is passed on", { skip: process.platform === "win32" }, async () => {
   const { spawn } = await import("node:child_process");
   fs.writeFileSync(
     fakeClaude,
@@ -115,7 +133,7 @@ test("one Ctrl+C reaches Claude once, and a TERM to the wrapper is passed on", a
   const wrapper = spawn(process.execPath, [CLI, "run"], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...base, PATH: `${path.dirname(fakeClaude)}:/usr/bin:/bin`, AGENT_SWITCH_NO_CHECK: "1" },
+    env: { ...base, PATH: testPath(), AGENT_SWITCH_NO_CHECK: "1" },
   });
   let out = "";
   wrapper.stdout.on("data", (chunk) => (out += chunk));

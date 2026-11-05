@@ -30,7 +30,7 @@ test("a healthy setup has no failures", { skip: process.platform !== "linux" }, 
   assert.equal(messages("fail"), "");
 });
 
-test("doctor flags a shared login file", () => {
+test("doctor flags a shared login file", { skip: process.platform === "win32" }, () => {
   const creds = path.join(personal.home, ".credentials.json");
   fs.rmSync(creds);
   fs.symlinkSync(path.join(home, ".claude", ".credentials.json"), creds);

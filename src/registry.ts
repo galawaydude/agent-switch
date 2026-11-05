@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
+import { platform } from "./platform.js";
 import { isRecord, mkdirPrivate, readJson, str, withLock, writeJsonAtomic } from "./fsutil.js";
-import { homesRoot, isInside, lockPath, registryPath, stateRoot } from "./paths.js";
+import { homesRoot, lockPath, registryPath, stateRoot } from "./paths.js";
 import type { Identity, Provider } from "./provider.js";
 
 export const DEFAULT_THRESHOLD = 95;
@@ -208,9 +210,11 @@ export function setMode(provider: Provider, mode: string, threshold?: string): R
 /**
  * Whether a running process was started with this home as its config dir.
  * Removing that home would pull the login out from under a live session.
- * Linux exposes environments in /proc; elsewhere we can't tell and say no.
+ * Linux exposes environments in /proc and macOS through `ps -E`; on Windows
+ * we can't tell and say no.
  */
 export function homeInUse(provider: Provider, home: string): boolean {
+  if (platform() === "darwin") return homeInUseMac(provider, home);
   let entries: string[];
   try {
     entries = fs.readdirSync("/proc").filter((name) => /^\d+$/.test(name));
@@ -242,26 +246,17 @@ export function homeInUse(provider: Provider, home: string): boolean {
   return false;
 }
 
-export function remove(provider: Provider, target: string): { account: Account; deletedHome: boolean } {
-  return mutate(provider, (registry) => {
-    const account = mustFind(provider, registry, target);
-    if (account.primary) {
-      throw new AccountError(`${account.label} is the login in ${provider.primaryHome()}; it can't be removed.`);
-    }
-    const home = accountHome(provider, account);
-    if (homeInUse(provider, home)) {
-      throw new AccountError(`A running ${provider.name} session uses ${account.label}. Quit it first, then remove the account.`);
-    }
-    // Only a home agent-switch made is deleted. Its shared entries are links,
-    // and rm removes a link without following it. An adopted home stays.
-    let deletedHome = false;
-    if (isInside(home, homesRoot(provider.id)) && !fs.lstatSync(home, { throwIfNoEntry: false })?.isSymbolicLink()) {
-      fs.rmSync(home, { recursive: true, force: true });
-      deletedHome = true;
-    }
-    registry.accounts = registry.accounts.filter((a) => a.id !== account.id);
-    if (registry.active === account.id) registry.active = registry.accounts[0]!.id;
-    registry.alert = "";
-    return { account, deletedHome };
+/** `ps -E` appends each own process's environment to its command line. */
+function homeInUseMac(provider: Provider, home: string): boolean {
+  const result = spawnSync("ps", ["-E", "-ww", "-o", "pid=,command="], { encoding: "utf8", timeout: 5_000 });
+  if (result.status !== 0 || !result.stdout) return false;
+  const needle = `${provider.homeEnv}=${path.resolve(home)}`;
+  return result.stdout.split("\n").some((line) => {
+    const pid = Number.parseInt(line.trim(), 10);
+    if (pid === process.pid) return false;
+    const at = line.indexOf(needle);
+    if (at === -1) return false;
+    const next = line[at + needle.length];
+    return next === undefined || next === " " || next === "/";
   });
 }

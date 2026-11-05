@@ -3,13 +3,14 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import { fileURLToPath } from "node:url";
+import { isWindows } from "./platform.js";
 import type { Provider } from "./provider.js";
 import type { Account } from "./registry.js";
 
 function isExecutable(file: string): boolean {
   try {
-    const info = fs.statSync(file);
-    if (!info.isFile()) return false;
+    if (!fs.statSync(file).isFile()) return false;
+    if (isWindows()) return true; // Windows runs by extension, not mode bits
     fs.accessSync(file, fs.constants.X_OK);
     return true;
   } catch {
@@ -27,18 +28,63 @@ function realpath(file: string): string {
 
 const SELF = realpath(fileURLToPath(new URL("./cli.js", import.meta.url)));
 
+function extensions(name: string): string[] {
+  if (!isWindows() || path.extname(name)) return [""];
+  const pathext = (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  return [...pathext.map((e) => e.toLowerCase()), ""];
+}
+
 /**
  * The first `name` on PATH that isn't agent-switch itself, so a `claude`
- * symlink pointing back at us can never recurse.
+ * shim pointing back at us can never recurse.
  */
-export function resolveBinary(name: string, envPath = process.env.PATH ?? ""): string | undefined {
+export function resolveBinary(name: string, envPath = process.env.PATH ?? process.env.Path ?? ""): string | undefined {
   if (process.env.AGENT_SWITCH_CLAUDE_BIN && name === "claude") return process.env.AGENT_SWITCH_CLAUDE_BIN;
-  for (const dir of envPath.split(path.delimiter)) {
+  const delimiter = isWindows() ? ";" : path.delimiter;
+  for (const dir of envPath.split(delimiter)) {
     if (!dir) continue;
-    const candidate = path.join(dir, name);
-    if (isExecutable(candidate) && realpath(candidate) !== SELF) return candidate;
+    for (const ext of extensions(name)) {
+      const candidate = path.join(dir, name + ext);
+      if (isExecutable(candidate) && realpath(candidate) !== SELF) return candidate;
+    }
   }
   return undefined;
+}
+
+/**
+ * How to start a resolved binary. Windows batch files (npm's `claude.cmd`
+ * shims) can't be spawned directly, and going through cmd.exe re-parses the
+ * arguments. When the shim belongs to an npm package, run its script with
+ * Node instead; otherwise fall back to cmd.exe with careful quoting.
+ */
+export function commandFor(file: string, args: readonly string[]): { file: string; args: string[]; verbatim: boolean } {
+  if (!isWindows() || !/\.(cmd|bat)$/i.test(file)) return { file, args: [...args], verbatim: false };
+  const script = npmShimTarget(file);
+  if (script) return { file: process.execPath, args: [script, ...args], verbatim: false };
+  const line = [`"${file}"`, ...args.map(quoteForCmd)].join(" ");
+  return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true };
+}
+
+/** The JS entry an npm `.cmd` shim runs: the `%dp0%\\...js` path inside it. */
+export function npmShimTarget(shim: string): string | undefined {
+  let text: string;
+  try {
+    text = fs.readFileSync(shim, "utf8");
+  } catch {
+    return undefined;
+  }
+  // "%dp0%\\node_modules\\...\\cli.js" (current npm) or "%~dp0\\..." (older)
+  const match = /"%~?dp0%?\\([^"]+\.(?:c|m)?js)"/i.exec(text);
+  if (!match) return undefined;
+  const script = path.join(path.dirname(shim), ...match[1]!.split("\\"));
+  return fs.existsSync(script) ? script : undefined;
+}
+
+/** Quote one argument for cmd.exe /s /c (the cross-spawn rules). */
+export function quoteForCmd(arg: string): string {
+  let quoted = arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1");
+  quoted = `"${quoted}"`;
+  return quoted.replace(/[()%!^"<>&|]/g, "^$&");
 }
 
 /**
@@ -75,7 +121,8 @@ const GROUP_DELIVERED: NodeJS.Signals[] = ["SIGINT", "SIGQUIT", "SIGWINCH"];
  */
 export function runAttached(file: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { stdio: "inherit", env });
+    const command = commandFor(file, args);
+    const child = spawn(command.file, command.args, { stdio: "inherit", env, windowsVerbatimArguments: command.verbatim });
     const handlers = new Map<NodeJS.Signals, () => void>();
     for (const signal of FORWARDED) {
       handlers.set(signal, () => {
@@ -83,9 +130,17 @@ export function runAttached(file: string, args: readonly string[], env: NodeJS.P
       });
     }
     for (const signal of GROUP_DELIVERED) handlers.set(signal, () => undefined);
-    for (const [signal, handler] of handlers) process.on(signal, handler);
+    const listening: [NodeJS.Signals, () => void][] = [];
+    for (const [signal, handler] of handlers) {
+      try {
+        process.on(signal, handler);
+        listening.push([signal, handler]);
+      } catch {
+        // not a signal this platform has
+      }
+    }
     const cleanup = () => {
-      for (const [signal, handler] of handlers) process.off(signal, handler);
+      for (const [signal, handler] of listening) process.off(signal, handler);
     };
     child.on("error", (error) => {
       cleanup();

@@ -1,5 +1,6 @@
 import * as os from "node:os";
 import * as path from "node:path";
+import { platform } from "./platform.js";
 
 export function userHome(): string {
   return process.env.HOME || os.homedir();
@@ -8,6 +9,9 @@ export function userHome(): string {
 /** Where agent-switch keeps registries, added homes and caches. */
 export function stateRoot(): string {
   if (process.env.AGENT_SWITCH_STATE_DIR) return path.resolve(process.env.AGENT_SWITCH_STATE_DIR);
+  if (platform() === "win32") {
+    return path.join(process.env.LOCALAPPDATA || path.join(userHome(), "AppData", "Local"), "agent-switch");
+  }
   const xdg = process.env.XDG_STATE_HOME;
   return path.join(xdg && path.isAbsolute(xdg) ? xdg : path.join(userHome(), ".local", "state"), "agent-switch");
 }
