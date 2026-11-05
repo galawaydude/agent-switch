@@ -38,8 +38,12 @@ The design is borrowed from [Omarchy](https://omarchy.org)'s agent accounts, mad
 Requires Linux, Node 20 or newer, and [Claude Code](https://docs.claude.com/claude-code). macOS isn't supported yet: it keeps Claude Code's login in the Keychain.
 
 ```sh
-npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.1.0/agent-switch-0.1.0.tgz
+git clone https://github.com/galawaydude/agent-switch && cd agent-switch
+npm ci && npm run pack:release
+npm install -g ./agent-switch-0.1.0.tgz
 ```
+
+This installs a prebuilt package, so npm runs no install scripts.
 
 Then make `claude` go through agent-switch by adding one line to your shell rc:
 
