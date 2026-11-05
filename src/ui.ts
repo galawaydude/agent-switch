@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import { fileURLToPath } from "node:url";
+import { CANCEL_LINE } from "./login.js";
 import { platform } from "./platform.js";
 
 /**
@@ -71,6 +72,23 @@ function startJob(args: string[]): Job {
     job.events.push({ event: "error", detail: error.message });
   });
   return job;
+}
+
+/**
+ * Ask the sign-in to stop through its stdin, so it cleans up on every OS
+ * (on Windows a kill skips all cleanup). Kill it only if it doesn't listen.
+ */
+function cancelJob(job: Job): void {
+  if (job.done) return;
+  try {
+    job.child.stdin.write(CANCEL_LINE + "\n");
+  } catch {
+    // stdin already closed
+  }
+  const timer = setTimeout(() => {
+    if (!job.done) job.child.kill("SIGTERM");
+  }, 5_000);
+  timer.unref();
 }
 
 function openBrowser(url: string): void {
@@ -199,7 +217,7 @@ export async function startUi(options: UiOptions): Promise<{ url: string; close:
         return send(res, 200, { ok: true });
       }
       if (req.method === "POST" && jobMatch[3] === "cancel") {
-        if (!job.done) job.child.kill("SIGTERM");
+        cancelJob(job);
         return send(res, 200, { ok: true });
       }
     }
@@ -219,7 +237,7 @@ export async function startUi(options: UiOptions): Promise<{ url: string; close:
   const url = `http://127.0.0.1:${port}/?t=${token}`;
 
   const close = async () => {
-    for (const job of jobs.values()) if (!job.done) job.child.kill("SIGTERM");
+    for (const job of jobs.values()) cancelJob(job);
     server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };

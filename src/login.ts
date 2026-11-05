@@ -140,7 +140,13 @@ export interface AddResult {
 }
 
 /** Runs `claude auth login`: attached to the terminal, or piped for a UI. */
-export type LoginRunner = (binary: string, args: readonly string[], env: NodeJS.ProcessEnv) => Promise<number>;
+export type LoginRunner = ((binary: string, args: readonly string[], env: NodeJS.ProcessEnv) => Promise<number>) & {
+  /** Whether the sign-in was cancelled from the other end. */
+  cancelled?: () => boolean;
+};
+
+/** The stdin line a UI sends to cancel a sign-in. Signals can't do it on Windows. */
+export const CANCEL_LINE = "@@agent-switch cancel";
 
 export const terminalRunner: LoginRunner = (binary, args, env) => runAttached(binary, args, env);
 
@@ -154,7 +160,8 @@ const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07]*\x07/g;
  * are passed to it, so a pasted code reaches it. SIGTERM cancels the sign-in.
  */
 export function eventRunner(emit: (event: LoginEvent, detail: string) => void): LoginRunner {
-  return (binary, args, env) =>
+  let cancelled = false;
+  const runner: LoginRunner = (binary, args, env) =>
     new Promise((resolve, reject) => {
       const command = commandFor(binary, args);
       const child = spawn(command.file, command.args, {
@@ -181,7 +188,14 @@ export function eventRunner(emit: (event: LoginEvent, detail: string) => void): 
       };
       child.stdout.on("data", scan);
       child.stderr.on("data", scan);
-      const forward = (data: Buffer) => child.stdin.write(data);
+      const forward = (data: Buffer) => {
+        if (data.toString("utf8").includes(CANCEL_LINE)) {
+          cancelled = true;
+          child.kill("SIGTERM");
+          return;
+        }
+        child.stdin.write(data);
+      };
       process.stdin.on("data", forward);
       const cancel = () => child.kill("SIGTERM");
       process.on("SIGTERM", cancel);
@@ -199,6 +213,8 @@ export function eventRunner(emit: (event: LoginEvent, detail: string) => void): 
         resolve(code ?? 1);
       });
     });
+  runner.cancelled = () => cancelled;
+  return runner;
 }
 
 export interface LoginOptions {
@@ -249,6 +265,7 @@ export async function addAccount(provider: Provider, label: string, options: Log
   process.on("SIGTERM", onSignal);
   try {
     await run(binary, provider.loginArgs, loginEnv(provider, home, browser));
+    if (run.cancelled?.()) interrupted = true;
     if (interrupted) throw new AccountError("Sign-in cancelled.");
     return { kind: "added", accounts: [registerLogin(provider, home, label)] };
   } finally {
