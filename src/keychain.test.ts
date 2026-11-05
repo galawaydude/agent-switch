@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import * as os from "node:os";
 import * as path from "node:path";
 import { claude, readOauth } from "./claude.js";
 import { keychainAccount, keychainService } from "./credentials.js";
@@ -12,6 +13,8 @@ import { fakeAccountFile, fakeLogin, sandbox } from "./test-helpers.js";
  * AGENT_SWITCH_KEYCHAIN_TEST), so a developer's own Keychain is never touched.
  */
 const enabled = process.platform === "darwin" && Boolean(process.env.AGENT_SWITCH_KEYCHAIN_TEST);
+// `security` finds the Keychain through HOME, which the sandbox redirects.
+const securityEnv = () => ({ ...process.env, HOME: os.userInfo().homedir });
 
 test("a real Keychain login is read, registered and removed", { skip: !enabled }, () => {
   const home = sandbox();
@@ -25,6 +28,7 @@ test("a real Keychain login is read, registered and removed", { skip: !enabled }
   const added = spawnSync("security", ["add-generic-password", "-U", "-A", "-a", keychainAccount(), "-s", service, "-w", secret], {
     encoding: "utf8",
     timeout: 15_000,
+    env: securityEnv(),
   });
   assert.equal(added.status, 0, added.stderr);
   try {
@@ -33,9 +37,9 @@ test("a real Keychain login is read, registered and removed", { skip: !enabled }
     const account = registerLogin(claude, accountHome, "Personal");
     assert.equal(account.plan, "Pro");
     removeHome(claude, account.home);
-    const after = spawnSync("security", ["find-generic-password", "-a", keychainAccount(), "-s", service], { timeout: 15_000 });
+    const after = spawnSync("security", ["find-generic-password", "-a", keychainAccount(), "-s", service], { timeout: 15_000, env: securityEnv() });
     assert.notEqual(after.status, 0, "the Keychain item was deleted");
   } finally {
-    spawnSync("security", ["delete-generic-password", "-a", keychainAccount(), "-s", service], { timeout: 15_000 });
+    spawnSync("security", ["delete-generic-password", "-a", keychainAccount(), "-s", service], { timeout: 15_000, env: securityEnv() });
   }
 });

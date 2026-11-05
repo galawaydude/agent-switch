@@ -41,11 +41,22 @@ export function keychainService(home: string): string {
   return `${SERVICE}-${hash}`;
 }
 
+/** The OS user's real home: the Keychain belongs to the user, whatever $HOME says. */
+function accountHomeDir(): string | undefined {
+  try {
+    return os.userInfo().homedir;
+  } catch {
+    return undefined;
+  }
+}
+
 function security(args: string[]): { status: number | null; stdout: string } {
+  const realHome = accountHomeDir();
   const result = spawnSync(process.env.AGENT_SWITCH_SECURITY_BIN || "security", args, {
     encoding: "utf8",
     timeout: 5_000,
     stdio: ["ignore", "pipe", "ignore"],
+    env: realHome ? { ...process.env, HOME: realHome } : process.env,
   });
   return { status: result.status, stdout: result.stdout ?? "" };
 }
