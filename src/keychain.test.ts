@@ -22,7 +22,10 @@ test("a real Keychain login is read, registered and removed", { skip: !enabled }
   const secret = JSON.stringify({
     claudeAiOauth: { accessToken: "ci-token", refreshToken: "ci-refresh", expiresAt: Date.now() + 3_600_000, subscriptionType: "pro", rateLimitTier: "" },
   });
-  const added = spawnSync("security", ["add-generic-password", "-U", "-a", keychainAccount(), "-s", service, "-w", secret], { encoding: "utf8" });
+  const added = spawnSync("security", ["add-generic-password", "-U", "-A", "-a", keychainAccount(), "-s", service, "-w", secret], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
   assert.equal(added.status, 0, added.stderr);
   try {
     assert.equal(claude.signedIn(accountHome), true);
@@ -30,9 +33,9 @@ test("a real Keychain login is read, registered and removed", { skip: !enabled }
     const account = registerLogin(claude, accountHome, "Personal");
     assert.equal(account.plan, "Pro");
     removeHome(claude, account.home);
-    const after = spawnSync("security", ["find-generic-password", "-a", keychainAccount(), "-s", service]);
+    const after = spawnSync("security", ["find-generic-password", "-a", keychainAccount(), "-s", service], { timeout: 15_000 });
     assert.notEqual(after.status, 0, "the Keychain item was deleted");
   } finally {
-    spawnSync("security", ["delete-generic-password", "-a", keychainAccount(), "-s", service]);
+    spawnSync("security", ["delete-generic-password", "-a", keychainAccount(), "-s", service], { timeout: 15_000 });
   }
 });

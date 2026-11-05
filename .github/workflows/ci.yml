@@ -24,7 +24,16 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Use a throwaway unlocked keychain
+        if: runner.os == 'macOS'
+        run: |
+          security create-keychain -p ci agent-switch-ci.keychain
+          security set-keychain-settings agent-switch-ci.keychain
+          security unlock-keychain -p ci agent-switch-ci.keychain
+          security list-keychains -d user -s agent-switch-ci.keychain
+          security default-keychain -d user -s agent-switch-ci.keychain
       - run: npm test
+        timeout-minutes: 10
         env:
           # Only CI may write to the macOS Keychain.
           AGENT_SWITCH_KEYCHAIN_TEST: ${{ runner.os == 'macOS' && '1' || '' }}

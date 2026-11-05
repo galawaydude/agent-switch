@@ -35,27 +35,40 @@ The design is borrowed from [Omarchy](https://omarchy.org)'s agent accounts, mad
 
 ## Install
 
-Requires Linux, Node 20 or newer, and [Claude Code](https://docs.claude.com/claude-code). macOS isn't supported yet: it keeps Claude Code's login in the Keychain.
+Works on Linux, macOS and Windows. Needs Node 20 or newer and [Claude Code](https://docs.claude.com/claude-code).
 
 ```sh
-git clone https://github.com/galawaydude/agent-switch && cd agent-switch
-npm ci && npm run pack:release
-npm install -g ./agent-switch-0.1.0.tgz
+# Homebrew (macOS and Linux)
+brew install galawaydude/tap/agent-switch
+
+# or npm, anywhere
+npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.2.0/agent-switch-0.2.0.tgz
 ```
 
-This installs a prebuilt package, so npm runs no install scripts.
-
-Then make `claude` go through agent-switch by adding one line to your shell rc:
+Then make `claude` go through agent-switch:
 
 ```sh
-# ~/.bashrc or ~/.zshrc
+# bash / zsh: ~/.bashrc or ~/.zshrc
 eval "$(agent-switch shell-init)"
 
-# ~/.config/fish/config.fish
+# fish: ~/.config/fish/config.fish
 agent-switch shell-init fish | source
+
+# PowerShell: $PROFILE
+agent-switch shell-init powershell | Out-String | Invoke-Expression
 ```
 
 Check the setup with `agent-switch doctor`.
+
+### Platform notes
+
+| | Logins | Shared setup | Notes |
+|---|---|---|---|
+| Linux | `.credentials.json` in each account folder | symlinks | |
+| macOS | Keychain, one entry per account folder (Claude Code's own scheme) | symlinks | Removing an account also deletes its Keychain entry |
+| Windows | `.credentials.json` in each account folder | junctions for folders; symlinks for files | File symlinks need Developer Mode. Without it, `settings.json`, `CLAUDE.md`, `history.jsonl` and `keybindings.json` aren't shared, and `doctor` says so. `remove` can't detect a running session, so quit Claude first |
+
+State lives in `~/.local/state/agent-switch` (or `$XDG_STATE_HOME`), and in `%LOCALAPPDATA%\agent-switch` on Windows.
 
 ## Use
 
@@ -73,7 +86,7 @@ Accounts can be named by id, name or email. `asw` is a short alias for `agent-sw
 
 ### Adding an account
 
-`agent-switch add <name>` runs `claude auth login` in a fresh folder and opens the sign-in page in a **private** window. A normal window would quietly reuse the account you're already signed in to. It looks for Chromium, Chrome, Brave, Vivaldi, Edge, Firefox, LibreWolf or Zen. To use something else, set `AGENT_SWITCH_BROWSER` to a command that opens a URL privately:
+`agent-switch add <name>` runs `claude auth login` in a fresh folder and opens the sign-in page in a **private** window. A normal window would quietly reuse the account you're already signed in to. It looks for Chrome, Chromium, Brave, Vivaldi, Edge, Firefox, LibreWolf or Zen, on each platform. To use something else, set `AGENT_SWITCH_BROWSER` to a command that opens a URL privately:
 
 ```sh
 AGENT_SWITCH_BROWSER="firefox -P throwaway --private-window" agent-switch add Work
@@ -119,7 +132,7 @@ An account you haven't used for a while has an expired access token. agent-switc
 | `mode [manual\|auto] [threshold]` | How to react near a limit |
 | `check [--notify] [--quiet]` | Refresh limits and apply the switching policy |
 | `run [--as <account>] [--no-check] [-- args]` | Start Claude Code (what the `claude` function calls) |
-| `shell-init [bash\|zsh\|fish]` | Print the `claude` shell function |
+| `shell-init [bash\|zsh\|fish\|powershell]` | Print the `claude` shell function |
 | `adopt <dir> [name]` | Register an already signed-in config folder |
 | `import omarchy` | Adopt Omarchy's agent accounts |
 | `doctor` | Check the setup |
@@ -156,7 +169,6 @@ Tests never touch your real `~/.claude`.
 
 ## Roadmap
 
-- macOS (Keychain-stored logins)
 - More agents: Codex, Grok and others that keep their login in a config folder
 
 ## License
