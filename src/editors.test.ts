@@ -74,8 +74,10 @@ test("removing the setting keeps the file valid", () => {
 
 // ------------------------------------------------------------ connecting
 
+/** Where this OS keeps an editor's settings (the layout agent-switch looks in). */
 function editorDir(folder: string): string {
-  const dir = path.join(home, ".config", folder, "User");
+  const base = process.platform === "darwin" ? path.join(home, "Library", "Application Support") : path.join(home, ".config");
+  const dir = path.join(base, folder, "User");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
