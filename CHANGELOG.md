@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 (2026-11-06)
+
+- Editors: `agent-switch setup` connects VS Code, VS Code Insiders, Cursor, Windsurf and VSCodium (macOS and Linux). It sets the Claude Code extension's `claudeCode.claudeProcessWrapper` to a small script that starts the extension's own claude as the account you picked. `settings.json` comments and layout are kept, the original is backed up, and a wrapper you set yourself is never overwritten. `setup --undo` reverses it.
+- The page's banner and `doctor` report which editors are connected.
+- New hidden command `agent-switch wrap <claude> [args]`, which the editor wrapper runs. It prints nothing to stdout and passes every signal on.
+
 ## 0.4.0 (2026-11-06)
 
 - `agent-switch setup` connects `claude` in your terminal by itself: it adds a guarded, marked line to your shell's startup file (zsh, bash, fish, PowerShell) and `setup --undo` removes it. Symlinked dotfiles stay symlinks.

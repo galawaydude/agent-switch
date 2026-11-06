@@ -8,6 +8,7 @@ import { resolveBinary } from "./launch.js";
 import { stateRoot, userHome } from "./paths.js";
 import type { Provider } from "./provider.js";
 import { accountHome, load } from "./registry.js";
+import { editorStatus, editorsSupported, installedEditors } from "./editors.js";
 import { hookedFiles } from "./setup.js";
 
 export type Level = "ok" | "warn" | "fail";
@@ -51,6 +52,17 @@ export function diagnose(provider: Provider, now = Date.now()): Finding[] {
   const hooked = hookedFiles();
   if (hooked.length) add("ok", `\`claude\` goes through agent-switch (set up in ${hooked.map((f) => f.replace(userHome(), "~")).join(", ")}).`);
   else add("warn", "Typing `claude` won't use agent-switch yet; only `agent-switch run` will.", "agent-switch setup");
+
+  // Editors (VS Code and its forks)
+  if (!editorsSupported()) {
+    if (installedEditors().length) add("warn", "VS Code-family editors on Windows keep using your Main account: agent-switch can't hook into them here yet.");
+  } else {
+    for (const editor of editorStatus()) {
+      if (editor.connected) add("ok", `${editor.name}: Claude conversations start as the account you picked.`);
+      else if (editor.otherWrapper) add("warn", `${editor.name} uses its own Claude wrapper (${editor.otherWrapper}), so it ignores your choice.`);
+      else add("warn", `${editor.name}: Claude there keeps using your Main account.`, "agent-switch setup");
+    }
+  }
 
   if (process.env[provider.homeEnv] && !process.env.AGENT_SWITCH_ACCOUNT) {
     add(

@@ -8,6 +8,7 @@ import { age, duration, meter, style, table } from "./format.js";
 import { adopt, importOmarchy, remove, repairLinks } from "./homes.js";
 import { accountEnv, resolveBinary, runAttached } from "./launch.js";
 import { addAccount, eventRunner, reauth } from "./login.js";
+import { connectEditors, disconnectEditors, editorStatus, editorsSupported, refreshWrapper, type EditorSetup } from "./editors.js";
 import { currentShell, hookedFiles, isHooked, reloadHint, setup, undo, type SetupResult, type Shell } from "./setup.js";
 import { startUi } from "./ui.js";
 import { isWindows } from "./platform.js";
@@ -72,6 +73,7 @@ const commands: Record<string, Command> = {
     async run(ctx) {
       const portIndex = process.argv.indexOf("--port");
       const port = portIndex > -1 ? Number(process.argv[portIndex + 1]) : undefined;
+      refreshWrapper();
       await startUi({ port: Number.isFinite(port) ? port : undefined, open: !ctx.flags.has("no-open"), log: ctx.out });
       await new Promise(() => undefined); // serve until Ctrl+C or Stop
       return 0;
@@ -80,20 +82,25 @@ const commands: Record<string, Command> = {
 
   setup: {
     usage: "setup [--undo] [--json]",
-    summary: "Make `claude` in your terminal use agent-switch (edits your shell's startup file)",
+    summary: "Make `claude` in your terminal and editors (VS Code, Cursor...) use agent-switch",
     run(ctx) {
       if (ctx.flags.has("undo")) {
         const cleaned = undo();
-        if (ctx.flags.has("json")) ctx.out(JSON.stringify({ removed: cleaned }));
-        else ctx.out(cleaned.length ? `Removed the hook from ${cleaned.map(tilde).join(", ")}. New terminals start claude directly.` : "There was no agent-switch hook to remove.");
+        const editors = disconnectEditors();
+        if (ctx.flags.has("json")) ctx.out(JSON.stringify({ removed: cleaned, editors }));
+        else {
+          ctx.out(cleaned.length ? `Removed the hook from ${cleaned.map(tilde).join(", ")}. New terminals start claude directly.` : "There was no shell hook to remove.");
+          if (editors.length) ctx.out(`Disconnected ${editors.join(", ")}.`);
+        }
         return 0;
       }
       const result = setup(shellFlag(ctx) ?? currentShell());
+      const editors = connectEditors();
       if (ctx.flags.has("json")) {
-        ctx.out(JSON.stringify(result));
+        ctx.out(JSON.stringify({ ...result, editors }));
         return 0;
       }
-      printSetup(ctx, result);
+      printSetup(ctx, result, editors);
       return 0;
     },
   },
@@ -301,7 +308,7 @@ const commands: Record<string, Command> = {
       const registry = load(ctx.provider);
       const usage = await collectAll(ctx.provider, registry.accounts, { force: ctx.flags.has("refresh") });
       if (ctx.flags.has("json")) {
-        ctx.out(JSON.stringify({ ...registry, usage: Object.fromEntries(usage), shell: { hooked: isHooked(), files: hookedFiles() } }, null, 2));
+        ctx.out(JSON.stringify({ ...registry, usage: Object.fromEntries(usage), shell: { hooked: isHooked(), files: hookedFiles() }, editors: editorsSupported() ? editorStatus().map((e) => ({ name: e.name, connected: e.connected, otherWrapper: e.otherWrapper })) : [] }, null, 2));
         return 0;
       }
       printStatus(ctx, registry, usage);
@@ -385,14 +392,21 @@ function shellFlag(ctx: Context): Shell | undefined {
   return undefined;
 }
 
-function printSetup(ctx: Context, result: SetupResult): void {
+function printSetup(ctx: Context, result: SetupResult, editors?: EditorSetup): void {
   if (result.already.length) {
-    ctx.out(`claude already uses agent-switch (hooked in ${result.already.map(tilde).join(", ")}).`);
-    return;
+    ctx.out(`Terminal: \`claude\` already uses agent-switch (${result.already.map(tilde).join(", ")}).`);
+  } else {
+    ctx.out(style.green(`Terminal: added agent-switch to ${result.added.map(tilde).join(", ")}.`));
+    ctx.out(`  Open a new terminal and \`claude\` will start as the account you picked.`);
+    ctx.out(style.dim(`  In a terminal that's already open, run: ${reloadHint(result.shell, result.added[0]!)}`));
   }
-  ctx.out(style.green(`Done: added agent-switch to ${result.added.map(tilde).join(", ")}.`));
-  ctx.out(`Open a new terminal and \`claude\` will start as the account you picked.`);
-  ctx.out(style.dim(`In a terminal that's already open, run: ${reloadHint(result.shell, result.added[0]!)}`));
+  if (!editors) return;
+  if (editors.connected.length) {
+    ctx.out(style.green(`Editors: connected ${editors.connected.join(", ")}.`));
+    ctx.out("  New Claude conversations there start as the account you picked.");
+  }
+  if (editors.already.length) ctx.out(`Editors: ${editors.already.join(", ")} already connected.`);
+  for (const { name, reason } of editors.skipped) ctx.out(style.yellow(`Editors: skipped ${name}: ${reason}.`));
 }
 
 /**
@@ -404,7 +418,7 @@ async function offerSetup(ctx: Context): Promise<void> {
   ctx.out("");
   ctx.out(style.yellow("`claude` in your terminal doesn't go through agent-switch yet, so it ignores this choice."));
   const answer = (await ask("Connect it now? It adds one line to your shell's startup file. [Y/n] ")).toLowerCase();
-  if (answer === "" || answer === "y" || answer === "yes") printSetup(ctx, setup(currentShell()));
+  if (answer === "" || answer === "y" || answer === "yes") printSetup(ctx, setup(currentShell()), connectEditors());
   else ctx.out(style.dim("Skipped. Run agent-switch setup whenever you like."));
 }
 
@@ -531,6 +545,32 @@ export async function runClaude(provider: Provider, argv: string[]): Promise<num
   return runAttached(binary, args, env);
 }
 
+/**
+ * `agent-switch wrap <claude> [args]`: what an editor's wrapper script runs.
+ * The editor talks to Claude over stdout, so this never prints there; it
+ * picks the account and starts the editor's own claude exactly as given.
+ */
+export async function wrapClaude(provider: Provider, argv: string[]): Promise<number> {
+  const [binary, ...args] = argv;
+  if (!binary) {
+    process.stderr.write("Usage: agent-switch wrap <claude> [args...]\n");
+    return 2;
+  }
+  let env: NodeJS.ProcessEnv = process.env;
+  try {
+    let target = launchTarget(provider, load(provider));
+    if (target.kind === "account" && target.reason === "active" && !process.env.AGENT_SWITCH_NO_CHECK) {
+      const result = await checkAndApply(provider);
+      if (result.applied?.switched) desktopNotify(result.applied.title, result.applied.body);
+      target = launchTarget(provider, result.registry);
+    }
+    if (target.kind === "account") env = accountEnv(provider, target.account);
+  } catch {
+    env = process.env; // never stand between the editor and Claude
+  }
+  return runAttached(binary, args, env, { fromTerminal: false });
+}
+
 export function registerCommand(name: string, command: Command): void {
   commands[name] = command;
 }
@@ -574,6 +614,7 @@ export function parse(argv: string[]): { command: string; provider: Provider; ar
 export async function main(argv: string[]): Promise<number> {
   // `run` passes everything after it to Claude untouched, flags included.
   if (argv[0] === "run") return runClaude(claude, argv.slice(1));
+  if (argv[0] === "wrap") return wrapClaude(claude, argv.slice(1));
   const { command, provider, args, flags } = parse(argv);
   const out = (line = "") => process.stdout.write(line + "\n");
   const err = (line = "") => process.stderr.write(line + "\n");

@@ -119,17 +119,25 @@ const GROUP_DELIVERED: NodeJS.Signals[] = ["SIGINT", "SIGQUIT", "SIGWINCH"];
  * Run a child with the terminal, and resolve with the exit code a shell
  * would report (128 + signal number for a signal death).
  */
-export function runAttached(file: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
+export function runAttached(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  options: { fromTerminal?: boolean } = {},
+): Promise<number> {
+  // Without a terminal (an editor starting us), nothing sends Ctrl+C to the
+  // child for us, so every signal has to be passed on.
+  const fromTerminal = options.fromTerminal ?? true;
   return new Promise((resolve, reject) => {
     const command = commandFor(file, args);
     const child = spawn(command.file, command.args, { stdio: "inherit", env, windowsVerbatimArguments: command.verbatim });
     const handlers = new Map<NodeJS.Signals, () => void>();
-    for (const signal of FORWARDED) {
+    for (const signal of fromTerminal ? FORWARDED : [...FORWARDED, ...GROUP_DELIVERED]) {
       handlers.set(signal, () => {
         if (child.exitCode === null && child.signalCode === null) child.kill(signal);
       });
     }
-    for (const signal of GROUP_DELIVERED) handlers.set(signal, () => undefined);
+    if (fromTerminal) for (const signal of GROUP_DELIVERED) handlers.set(signal, () => undefined);
     const listening: [NodeJS.Signals, () => void][] = [];
     for (const [signal, handler] of handlers) {
       try {

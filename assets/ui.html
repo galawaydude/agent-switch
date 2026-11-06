@@ -204,7 +204,13 @@
   function render() {
     if (!state) return;
     const hooked = !state.shell || state.shell.hooked;
-    if (!hooked) $("setup-banner").hidden = false;
+    const editors = (state.editors || []).filter((e) => !e.connected && !e.otherWrapper).map((e) => e.name);
+    if (!hooked || editors.length) {
+      const where = [!hooked ? "your terminal" : "", ...editors].filter(Boolean);
+      const list = where.length > 1 ? where.slice(0, -1).join(", ") + " and " + where[where.length - 1] : where[0];
+      if (!$("setup").hidden) $("setup-text").innerHTML = `<strong>One more step: connect <code>claude</code></strong>Claude in ${esc(list)} doesn't follow the account you pick yet.`;
+      $("setup-banner").hidden = false;
+    }
     for (const b of document.querySelectorAll("[data-mode]")) b.setAttribute("aria-pressed", String(b.dataset.mode === state.switch));
     $("threshold").value = state.threshold;
     $("threshold-value").textContent = state.threshold + "%";
@@ -307,11 +313,16 @@
     $("setup").disabled = true;
     try {
       const result = await api("/api/setup", {});
-      const files = (result.added && result.added.length ? result.added : result.already || []).join(", ");
-      $("setup-text").innerHTML = `<strong>Connected.</strong>Open a new terminal window and <code>claude</code> will start as the account you pick. (Added to ${esc(files)}.)`;
+      const editors = result.editors || { connected: [], already: [], skipped: [] };
+      const done = [...editors.connected, ...editors.already];
+      const skipped = editors.skipped.map((s) => `${s.name}: ${s.reason}`);
+      $("setup-text").innerHTML = `<strong>Connected.</strong>Open a new terminal window and <code>claude</code> starts as the account you pick` +
+        (done.length ? `, and so do new Claude conversations in ${esc(done.join(", "))}` : "") + "." +
+        (skipped.length ? `<br>Skipped ${esc(skipped.join("; "))}.` : "");
       $("setup-banner").classList.add("done");
       $("setup").hidden = true;
       if (state && state.shell) state.shell.hooked = true;
+      if (state && state.editors) for (const e of state.editors) if (editors.connected.includes(e.name) || editors.already.includes(e.name)) e.connected = true;
     } catch (e) {
       toast(e.message, true);
       $("setup").disabled = false;

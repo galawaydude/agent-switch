@@ -20,7 +20,7 @@ brew install galawaydude/tap/agent-switch
 No Homebrew? With Node 20+:
 
 ```sh
-npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.4.0/agent-switch-0.4.0.tgz
+npm install -g https://github.com/galawaydude/agent-switch/releases/download/v0.5.0/agent-switch-0.5.0.tgz
 ```
 
 You also need [Claude Code](https://docs.claude.com/claude-code), signed in as usual. That login becomes your **Main** account.
@@ -31,7 +31,7 @@ You also need [Claude Code](https://docs.claude.com/claude-code), signed in as u
 agent-switch setup
 ```
 
-This adds one line to your shell's startup file (zsh, bash, fish or PowerShell), so typing `claude` starts as the account you pick. Open a new terminal afterwards. `agent-switch setup --undo` takes the line back out. The page also offers a **Connect claude** button if you skip this.
+This connects Claude Code in your terminal **and in VS Code, Cursor, Windsurf and VSCodium** to the account you pick. For the terminal it adds one line to your shell's startup file; for each editor it sets one option in its settings. Then open a new terminal, and start a new Claude conversation in your editor. `agent-switch setup --undo` takes it all back out. If you skip this step, the page offers a **Connect claude** button.
 
 **3. Open it**
 
@@ -70,6 +70,7 @@ agent-switch run --as main     # one session as another account, without switchi
 - **Sign in to new accounts in the private window.** A normal window would quietly reuse the account you're already signed in to. If the wrong window opens, use the page's **Open the sign-in page** link in a private window yourself.
 - **Don't log out of Claude Code** to add an account. Logging out revokes the saved login.
 - **Running sessions never move.** Switching only affects sessions you start afterwards.
+- **Editors:** VS Code, Cursor, Windsurf and VSCodium follow your choice once `agent-switch setup` has connected them (macOS and Linux). JetBrains IDEs run Claude in their built-in terminal, so the terminal hook should cover them. The Claude desktop app has its own sign-in, separate from Claude Code, so it's out of scope. On Windows, editors keep using your Main account for now.
 - **`claude` always starts.** If agent-switch can't decide (no network, broken state), it warns and starts Claude Code as usual.
 - **Paused numbers are normal.** Accounts you haven't used for a while show their last-known limits until a session runs as them: `agent-switch run --as <name>` refreshes them.
 - **Your logins stay where Claude Code keeps them**: the Keychain on macOS, and a file in each account's folder elsewhere. agent-switch never copies or refreshes login tokens.
@@ -80,6 +81,7 @@ agent-switch is a launcher, not a proxy. It never sits between Claude Code and A
 
 - Each added account gets its own folder, which holds only its login. Everything else links back to `~/.claude`.
 - The `claude` shell function starts the real Claude Code with `CLAUDE_CONFIG_DIR` pointed at the account you picked.
+- In VS Code-family editors, the Claude Code extension's `claudeCode.claudeProcessWrapper` setting points at a small script that does the same for the extension's own copy of Claude.
 - Limits come from the same Anthropic endpoint Claude Code's `/usage` reads.
 - The page is only a display: every click runs an `agent-switch` command. It's reachable only from your own machine, behind a one-time link.
 
@@ -103,7 +105,7 @@ More detail is in [docs/DESIGN.md](docs/DESIGN.md).
 | `mode [manual\|auto] [threshold]` | Warn or switch automatically near a limit |
 | `check [--notify] [--quiet]` | Refresh limits and apply the switching rule (for cron) |
 | `run [--as <account>] [-- args]` | Start Claude Code (what the `claude` function calls) |
-| `setup [--undo]` | Connect `claude` in your terminal (edits your shell's startup file) |
+| `setup [--undo]` | Connect `claude` in your terminal and editors |
 | `shell-init [bash\|zsh\|fish\|powershell]` | Print the `claude` shell function |
 | `adopt <dir> [name]` | Register a config folder that's already signed in |
 | `doctor` | Check the setup |
